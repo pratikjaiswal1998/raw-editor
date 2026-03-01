@@ -62,7 +62,7 @@ export function AdjustmentPanel() {
     hasCommitted.current = false
   }, [])
 
-  if (activeTab === 'masks' || activeTab === 'export') return null
+  if (activeTab === 'recent' || activeTab === 'masks' || activeTab === 'export') return null
 
   const HSL_CHANNELS = ['Red', 'Orange', 'Yellow', 'Green', 'Aqua', 'Blue', 'Purple', 'Magenta']
 

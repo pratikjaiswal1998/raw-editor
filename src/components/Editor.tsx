@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useEditorStore } from '../state/editor-store'
 import { Canvas } from './Canvas'
 import { Toolbar } from './Toolbar'
@@ -7,9 +7,12 @@ import { AdjustmentPanel } from './AdjustmentPanel'
 import { ColorGradingPanel } from './ColorGradingPanel'
 import { MaskPanel } from './MaskPanel'
 import { ExportDialog } from './ExportDialog'
+import { RecentTab } from './RecentTab'
+import { updateRecentFileSettings } from '../utils/recent-files'
 import type { AdjustmentTab } from '../state/types'
 
 const TABS: { id: AdjustmentTab; label: string }[] = [
+  { id: 'recent', label: 'Recent' },
   { id: 'light', label: 'Light' },
   { id: 'color', label: 'Color' },
   { id: 'hsl', label: 'HSL' },
@@ -25,6 +28,26 @@ export function Editor() {
   const resetAdjustments = useEditorStore((s) => s.resetAdjustments)
   const undo = useEditorStore((s) => s.undo)
   const redo = useEditorStore((s) => s.redo)
+
+  // For debounced auto-save to recent files
+  const adjustments = useEditorStore((s) => s.adjustments)
+  const masks = useEditorStore((s) => s.masks)
+  const rotation = useEditorStore((s) => s.rotation)
+  const fileName = useEditorStore((s) => s.fileName)
+  const originalImage = useEditorStore((s) => s.originalImage)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Debounced save of current settings to IndexedDB recent entry (2s after last change)
+  useEffect(() => {
+    if (!fileName || !originalImage) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      void updateRecentFileSettings(fileName, { adjustments, masks, rotation })
+    }, 2000)
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [adjustments, masks, rotation, fileName, originalImage])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -85,6 +108,7 @@ export function Editor() {
 
         {/* Tab content */}
         <div className="tab-content">
+          <RecentTab />
           <AdjustmentPanel />
           <ColorGradingPanel />
           <MaskPanel />

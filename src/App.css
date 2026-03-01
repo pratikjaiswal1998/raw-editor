@@ -609,6 +609,114 @@
   pointer-events: none;
 }
 
+/* ===== RECENT TAB ===== */
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.recent-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-item-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.recent-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.recent-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.recent-btn--open {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.recent-btn--open:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.recent-btn--open.has-handle {
+  background: var(--accent-subtle);
+  color: var(--text-accent);
+  border: 1px solid var(--accent-border);
+}
+
+.recent-btn--open.has-handle:hover {
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.recent-btn--delete {
+  width: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--text-muted);
+  border-radius: 6px;
+}
+
+.recent-btn--delete:hover {
+  background: var(--danger-glow);
+  color: var(--danger);
+}
+
+.recent-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.recent-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 16px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-size: 13px;
+  text-align: center;
+}
+
 /* ===== DESKTOP LAYOUT ===== */
 @media (min-width: 768px) {
   .editor-main {

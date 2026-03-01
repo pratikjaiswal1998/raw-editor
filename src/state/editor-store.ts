@@ -4,10 +4,12 @@ import type { EditorState, GlobalAdjustments, HistoryEntry, AdjustmentTab } from
 import { DEFAULT_ADJUSTMENTS } from './types'
 import type { Mask, MaskShape } from '../masks/types'
 import { DEFAULT_MASK_ADJUSTMENTS } from '../masks/types'
+import type { RecentFile } from '../utils/recent-files'
 
 interface EditorActions {
   // Image
   setImage: (data: Float32Array, width: number, height: number, fileName: string) => void
+  restoreImage: (data: Float32Array, width: number, height: number, recent: RecentFile) => void
 
   // Adjustments
   setAdjustment: <K extends keyof GlobalAdjustments>(key: K, value: GlobalAdjustments[K]) => void
@@ -64,17 +66,42 @@ export const useEditorStore = create<EditorStore>()(
 
   // Actions
   setImage: (data, width, height, fileName) => {
+    const state = get()
+    // Restore: same file re-opened after a reload (image was null, fileName already saved)
+    const isRestore = fileName === state.fileName && state.originalImage === null
+    if (isRestore) {
+      set({ originalImage: data, imageWidth: width, imageHeight: height })
+    } else {
+      set({
+        originalImage: data,
+        imageWidth: width,
+        imageHeight: height,
+        fileName,
+        adjustments: { ...DEFAULT_ADJUSTMENTS },
+        masks: [],
+        activeMaskId: null,
+        history: [],
+        historyIndex: -1,
+        rotation: 0,
+        zoom: 1,
+        panX: 0,
+        panY: 0,
+      })
+    }
+  },
+
+  restoreImage: (data, width, height, recent) => {
     set({
       originalImage: data,
       imageWidth: width,
       imageHeight: height,
-      fileName,
-      adjustments: { ...DEFAULT_ADJUSTMENTS },
-      masks: [],
+      fileName: recent.fileName,
+      adjustments: { ...recent.adjustments },
+      masks: recent.masks.map((m) => ({ ...m, shape: { ...m.shape }, adjustments: { ...m.adjustments } })),
       activeMaskId: null,
+      rotation: recent.rotation,
       history: [],
       historyIndex: -1,
-      rotation: 0,
       zoom: 1,
       panX: 0,
       panY: 0,

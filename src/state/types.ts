@@ -55,7 +55,7 @@ export const DEFAULT_ADJUSTMENTS: GlobalAdjustments = {
   sharpness: 0,
 }
 
-export type AdjustmentTab = 'light' | 'color' | 'hsl' | 'grading' | 'masks' | 'export'
+export type AdjustmentTab = 'recent' | 'light' | 'color' | 'hsl' | 'grading' | 'masks' | 'export'
 
 export interface EditorState {
   // Image data

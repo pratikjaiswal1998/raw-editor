@@ -1,6 +1,7 @@
 import { useEditorStore } from '../state/editor-store'
 import { loadImageFile } from '../raw/dng-parser'
 import { triggerFileInput } from '../utils/file-io'
+import { saveRecentFile } from '../utils/recent-files'
 
 // Map EXIF orientation to rotation degrees
 function exifOrientationToRotation(orientation: number): number {
@@ -11,6 +12,9 @@ function exifOrientationToRotation(orientation: number): number {
     default: return 0
   }
 }
+
+const ACCEPT_TYPES = [{ description: 'Image files', accept: { 'image/*': ['.dng', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.heic'] as `.${string}`[] } }]
+const ACCEPT_STRING = '.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic'
 
 export function Toolbar() {
   const fileName = useEditorStore((s) => s.fileName)
@@ -24,18 +28,50 @@ export function Toolbar() {
   const rotateImage = useEditorStore((s) => s.rotateImage)
 
   const handleOpen = async () => {
-    const file = await triggerFileInput('.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic')
-    if (!file) return
-
     setLoading(true)
     try {
+      let file: File
+      let handle: FileSystemFileHandle | null = null
+
+      if (window.showOpenFilePicker) {
+        try {
+          const [h] = await window.showOpenFilePicker({ types: ACCEPT_TYPES })
+          handle = h
+          file = await h.getFile()
+        } catch (e) {
+          if ((e as Error).name === 'AbortError') return
+          throw e
+        }
+      } else {
+        const f = await triggerFileInput(ACCEPT_STRING)
+        if (!f) return
+        file = f
+      }
+
+      const storeBefore = useEditorStore.getState()
+      const isRestore = file.name === storeBefore.fileName && storeBefore.originalImage === null
       const rawImage = await loadImageFile(file)
       setImage(rawImage.data, rawImage.width, rawImage.height, file.name)
-      // Auto-rotate based on EXIF orientation
-      const autoRotation = exifOrientationToRotation(rawImage.metadata.orientation)
-      if (autoRotation !== 0) {
-        useEditorStore.setState({ rotation: autoRotation })
+
+      let finalRotation = isRestore ? storeBefore.rotation : 0
+      if (!isRestore) {
+        const autoRotation = exifOrientationToRotation(rawImage.metadata.orientation)
+        if (autoRotation !== 0) {
+          useEditorStore.setState({ rotation: autoRotation })
+          finalRotation = autoRotation
+        }
       }
+
+      // Save/update recent entry
+      const storeAfter = useEditorStore.getState()
+      await saveRecentFile({
+        fileName: file.name,
+        openedAt: Date.now(),
+        handle,
+        adjustments: isRestore ? storeBefore.adjustments : storeAfter.adjustments,
+        masks: isRestore ? storeBefore.masks : [],
+        rotation: finalRotation,
+      })
     } catch (e) {
       alert(`Failed to load image: ${e instanceof Error ? e.message : e}`)
     } finally {
@@ -46,7 +82,7 @@ export function Toolbar() {
   return (
     <div className="toolbar">
       <div className="toolbar-left">
-        <button className="toolbar-btn toolbar-btn--primary" onClick={handleOpen} title="Open file">
+        <button className="toolbar-btn toolbar-btn--primary" onClick={() => void handleOpen()} title="Open file">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
