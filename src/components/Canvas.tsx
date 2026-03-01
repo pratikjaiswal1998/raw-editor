@@ -16,6 +16,7 @@ export function Canvas() {
   const rafRef = useRef<number>(0)
 
   const originalImage = useEditorStore((s) => s.originalImage)
+  const fileName = useEditorStore((s) => s.fileName)
   const imageWidth = useEditorStore((s) => s.imageWidth)
   const imageHeight = useEditorStore((s) => s.imageHeight)
   const adjustments = useEditorStore((s) => s.adjustments)
@@ -220,7 +221,14 @@ export function Canvas() {
             <circle cx="8.5" cy="8.5" r="1.5"/>
             <polyline points="21 15 16 10 5 21"/>
           </svg>
-          <span className="canvas-empty-text">Open a RAW or JPEG file to begin</span>
+          {fileName ? (
+            <>
+              <span className="canvas-empty-text">Re-open <strong>{fileName}</strong> to restore your edits</span>
+              <span className="canvas-empty-subtext">Your adjustments are saved — the image is never stored for privacy</span>
+            </>
+          ) : (
+            <span className="canvas-empty-text">Open a RAW or JPEG file to begin</span>
+          )}
         </div>
       )}
       {showBeforeAfter && (

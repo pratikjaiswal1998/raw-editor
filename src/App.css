@@ -141,6 +141,14 @@
   font-weight: 400;
   color: var(--text-muted);
   letter-spacing: 0.3px;
+  text-align: center;
+}
+.canvas-empty-subtext {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  text-align: center;
+  max-width: 280px;
 }
 .canvas-badge {
   position: absolute;

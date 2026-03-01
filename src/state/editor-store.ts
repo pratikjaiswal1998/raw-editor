@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import type { EditorState, GlobalAdjustments, HistoryEntry, AdjustmentTab } from './types'
 import { DEFAULT_ADJUSTMENTS } from './types'
 import type { Mask, MaskShape } from '../masks/types'
@@ -39,7 +40,9 @@ interface EditorActions {
 
 export type EditorStore = EditorState & EditorActions
 
-export const useEditorStore = create<EditorStore>((set, get) => ({
+export const useEditorStore = create<EditorStore>()(
+  persist(
+    (set, get) => ({
   // Initial state
   originalImage: null,
   imageWidth: 0,
@@ -193,4 +196,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       historyIndex: state.historyIndex + 1,
     })
   },
-}))
+    }),
+    {
+      name: 'raw-editor-session',
+      storage: createJSONStorage(() => sessionStorage),
+      // Only persist settings — never the image data (privacy: image stays in memory only)
+      partialize: (state) => ({
+        adjustments: state.adjustments,
+        masks: state.masks,
+        activeMaskId: state.activeMaskId,
+        rotation: state.rotation,
+        fileName: state.fileName,
+        activeTab: state.activeTab,
+        showHistogram: state.showHistogram,
+      }),
+    }
+  )
+)
