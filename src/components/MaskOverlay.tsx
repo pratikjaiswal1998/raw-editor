@@ -130,9 +130,16 @@ export function MaskOverlay({ containerRef }: Props) {
     rotPt(-hw, 0, rad, cx, cy),
   ]
 
-  // Rotation handle
+  // Touch detection and handle sizing
+  const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches
+  const hr = (isCoarsePointer ? 9 : 5) / zoom
+  const hrCenter = (isCoarsePointer ? 11 : 6) / zoom
+  // Minimum 44px touch target diameter → 22px radius in screen space → 22/zoom in canvas space
+  const hitR = Math.max(hr, 22 / zoom)
+
+  // Rotation handle — longer stem on touch so it doesn't overlap edge handle hit area
   const rotLineStart = rotPt(0, -hh, rad, cx, cy)
-  const rotHandle = rotPt(0, -hh - 32, rad, cx, cy)
+  const rotHandle = rotPt(0, -hh - (isCoarsePointer ? 40 : 32), rad, cx, cy)
 
   // Feather outline corners (rect)
   const featherCorners = [
@@ -144,10 +151,6 @@ export function MaskOverlay({ containerRef }: Props) {
 
   // Feather handle for ellipse
   const ellipseFeatherHandle = rotPt(hw + featherPx, 0, rad, cx, cy)
-
-  // Handle radius compensated for zoom so handles appear constant size
-  const hr = 5 / zoom
-  const hrCenter = 6 / zoom
 
   // --- SVG point → canvas-px local coords ---
   const svgToCanvas = (svgX: number, svgY: number) => ({
@@ -322,63 +325,53 @@ export function MaskOverlay({ containerRef }: Props) {
         />
 
         {/* Center / move handle */}
-        <circle
-          className="mask-handle mask-handle--center"
-          cx={cx} cy={cy} r={hrCenter}
-          onPointerDown={handlePointerDown({ type: 'move' })}
-        />
+        <g>
+          <circle cx={cx} cy={cy} r={hitR} fill="transparent" style={{ pointerEvents: 'all', cursor: 'move' }} onPointerDown={handlePointerDown({ type: 'move' })} />
+          <circle className="mask-handle mask-handle--center" cx={cx} cy={cy} r={hrCenter} onPointerDown={handlePointerDown({ type: 'move' })} />
+        </g>
 
         {/* Corner handles (rect only) */}
         {isRect && corners.map((pt, i) => (
-          <circle
-            key={`corner-${i}`}
-            className="mask-handle"
-            cx={pt.x} cy={pt.y} r={hr}
-            onPointerDown={handlePointerDown({ type: 'corner', index: i as 0 | 1 | 2 | 3 })}
-          />
+          <g key={`corner-${i}`}>
+            <circle cx={pt.x} cy={pt.y} r={hitR} fill="transparent" style={{ pointerEvents: 'all', cursor: 'grab' }} onPointerDown={handlePointerDown({ type: 'corner', index: i as 0 | 1 | 2 | 3 })} />
+            <circle className="mask-handle" cx={pt.x} cy={pt.y} r={hr} onPointerDown={handlePointerDown({ type: 'corner', index: i as 0 | 1 | 2 | 3 })} />
+          </g>
         ))}
 
         {/* Edge handles (rect only) */}
         {isRect && edges.map((pt, i) => (
-          <circle
-            key={`edge-${i}`}
-            className="mask-handle"
-            cx={pt.x} cy={pt.y} r={hr * 0.8}
-            onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })}
-          />
+          <g key={`edge-${i}`}>
+            <circle cx={pt.x} cy={pt.y} r={hitR} fill="transparent" style={{ pointerEvents: 'all', cursor: 'grab' }} onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })} />
+            <circle className="mask-handle" cx={pt.x} cy={pt.y} r={hr * 0.8} onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })} />
+          </g>
         ))}
 
         {/* Axis handles (ellipse only) */}
         {isEllipse && axisHandles.map((pt, i) => (
-          <circle
-            key={`axis-${i}`}
-            className="mask-handle"
-            cx={pt.x} cy={pt.y} r={hr}
-            onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })}
-          />
+          <g key={`axis-${i}`}>
+            <circle cx={pt.x} cy={pt.y} r={hitR} fill="transparent" style={{ pointerEvents: 'all', cursor: 'grab' }} onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })} />
+            <circle className="mask-handle" cx={pt.x} cy={pt.y} r={hr} onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })} />
+          </g>
         ))}
 
         {/* Rotation handle */}
-        <circle
-          className="mask-handle mask-handle--rotate"
-          cx={rotHandle.x} cy={rotHandle.y} r={hr}
-          onPointerDown={handlePointerDown({ type: 'rotation' })}
-        />
+        <g>
+          <circle cx={rotHandle.x} cy={rotHandle.y} r={hitR} fill="transparent" style={{ pointerEvents: 'all', cursor: 'crosshair' }} onPointerDown={handlePointerDown({ type: 'rotation' })} />
+          <circle className="mask-handle mask-handle--rotate" cx={rotHandle.x} cy={rotHandle.y} r={hr} onPointerDown={handlePointerDown({ type: 'rotation' })} />
+        </g>
 
         {/* Feather handle */}
         {isRect && (
-          <circle
-            className="mask-handle mask-handle--feather"
-            cx={featherCorners[1].x} cy={featherCorners[1].y} r={hr * 0.8}
-            onPointerDown={handlePointerDown({ type: 'feather' })}
-          />
+          <g>
+            <circle cx={featherCorners[1].x} cy={featherCorners[1].y} r={hitR} fill="transparent" style={{ pointerEvents: 'all', cursor: 'ns-resize' }} onPointerDown={handlePointerDown({ type: 'feather' })} />
+            <circle className="mask-handle mask-handle--feather" cx={featherCorners[1].x} cy={featherCorners[1].y} r={hr * 0.8} onPointerDown={handlePointerDown({ type: 'feather' })} />
+          </g>
         )}
         {isEllipse && (
-          <circle
-            className="mask-handle mask-handle--feather"
-            cx={ellipseFeatherHandle.x} cy={ellipseFeatherHandle.y} r={hr * 0.8}
-            onPointerDown={handlePointerDown({ type: 'feather' })}
-          />
+          <g>
+            <circle cx={ellipseFeatherHandle.x} cy={ellipseFeatherHandle.y} r={hitR} fill="transparent" style={{ pointerEvents: 'all', cursor: 'ns-resize' }} onPointerDown={handlePointerDown({ type: 'feather' })} />
+            <circle className="mask-handle mask-handle--feather" cx={ellipseFeatherHandle.x} cy={ellipseFeatherHandle.y} r={hr * 0.8} onPointerDown={handlePointerDown({ type: 'feather' })} />
+          </g>
         )}
 
       </g>

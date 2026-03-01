@@ -76,28 +76,18 @@ function ColorWheel({ label, hue, saturation, onHueChange, onSatChange }: ColorW
     onHueChange(Math.round(normalizedHue))
   }, [onHueChange])
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
     isDragging.current = true
     handleInteraction(e.clientX, e.clientY)
   }
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDragging.current) return
     handleInteraction(e.clientX, e.clientY)
   }
 
-  const handleMouseUp = () => { isDragging.current = false }
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    isDragging.current = true
-    handleInteraction(e.touches[0].clientX, e.touches[0].clientY)
-  }
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isDragging.current) return
-    e.preventDefault()
-    handleInteraction(e.touches[0].clientX, e.touches[0].clientY)
-  }
+  const handlePointerUp = () => { isDragging.current = false }
 
   return (
     <div className="color-wheel-container">
@@ -107,13 +97,10 @@ function ColorWheel({ label, hue, saturation, onHueChange, onSatChange }: ColorW
         width={size}
         height={size}
         className="color-wheel-canvas"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleMouseUp}
+        style={{ width: '100%', touchAction: 'none' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
       />
       <div className="color-wheel-sliders">
         <div className="slider-row">
