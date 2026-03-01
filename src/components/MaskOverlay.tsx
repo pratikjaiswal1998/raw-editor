@@ -157,19 +157,21 @@ export function MaskOverlay({ containerRef }: Props) {
 
   // --- Event handlers ---
 
-  const getSvgXY = (e: React.MouseEvent) => {
+  const getSvgXY = (e: React.PointerEvent) => {
     const rect = svgRef.current!.getBoundingClientRect()
     return { svgX: e.clientX - rect.left, svgY: e.clientY - rect.top }
   }
 
-  const handleMouseDown = (handle: DragHandle) => (e: React.MouseEvent) => {
+  const handlePointerDown = (handle: DragHandle) => (e: React.PointerEvent) => {
     e.stopPropagation()
     e.preventDefault()
+    // Capture pointer on the SVG so pointermove/up fire even outside its bounds
+    svgRef.current?.setPointerCapture(e.pointerId)
     const { svgX, svgY } = getSvgXY(e)
     setDragging({ handle, startSvgX: svgX, startSvgY: svgY, startShape: { ...shape } })
   }
 
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!dragging) return
     const { svgX, svgY } = getSvgXY(e)
     const { handle, startSvgX, startSvgY, startShape } = dragging
@@ -271,8 +273,9 @@ export function MaskOverlay({ containerRef }: Props) {
     }
   }
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (dragging) {
+      svgRef.current?.releasePointerCapture(e.pointerId)
       pushHistory()
       setDragging(null)
     }
@@ -282,9 +285,8 @@ export function MaskOverlay({ containerRef }: Props) {
     <svg
       ref={svgRef}
       className="mask-overlay"
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
     >
       <g transform={groupTransform}>
 
@@ -323,7 +325,7 @@ export function MaskOverlay({ containerRef }: Props) {
         <circle
           className="mask-handle mask-handle--center"
           cx={cx} cy={cy} r={hrCenter}
-          onMouseDown={handleMouseDown({ type: 'move' })}
+          onPointerDown={handlePointerDown({ type: 'move' })}
         />
 
         {/* Corner handles (rect only) */}
@@ -332,7 +334,7 @@ export function MaskOverlay({ containerRef }: Props) {
             key={`corner-${i}`}
             className="mask-handle"
             cx={pt.x} cy={pt.y} r={hr}
-            onMouseDown={handleMouseDown({ type: 'corner', index: i as 0 | 1 | 2 | 3 })}
+            onPointerDown={handlePointerDown({ type: 'corner', index: i as 0 | 1 | 2 | 3 })}
           />
         ))}
 
@@ -342,7 +344,7 @@ export function MaskOverlay({ containerRef }: Props) {
             key={`edge-${i}`}
             className="mask-handle"
             cx={pt.x} cy={pt.y} r={hr * 0.8}
-            onMouseDown={handleMouseDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })}
+            onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })}
           />
         ))}
 
@@ -352,7 +354,7 @@ export function MaskOverlay({ containerRef }: Props) {
             key={`axis-${i}`}
             className="mask-handle"
             cx={pt.x} cy={pt.y} r={hr}
-            onMouseDown={handleMouseDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })}
+            onPointerDown={handlePointerDown({ type: 'edge', index: i as 0 | 1 | 2 | 3 })}
           />
         ))}
 
@@ -360,7 +362,7 @@ export function MaskOverlay({ containerRef }: Props) {
         <circle
           className="mask-handle mask-handle--rotate"
           cx={rotHandle.x} cy={rotHandle.y} r={hr}
-          onMouseDown={handleMouseDown({ type: 'rotation' })}
+          onPointerDown={handlePointerDown({ type: 'rotation' })}
         />
 
         {/* Feather handle */}
@@ -368,14 +370,14 @@ export function MaskOverlay({ containerRef }: Props) {
           <circle
             className="mask-handle mask-handle--feather"
             cx={featherCorners[1].x} cy={featherCorners[1].y} r={hr * 0.8}
-            onMouseDown={handleMouseDown({ type: 'feather' })}
+            onPointerDown={handlePointerDown({ type: 'feather' })}
           />
         )}
         {isEllipse && (
           <circle
             className="mask-handle mask-handle--feather"
             cx={ellipseFeatherHandle.x} cy={ellipseFeatherHandle.y} r={hr * 0.8}
-            onMouseDown={handleMouseDown({ type: 'feather' })}
+            onPointerDown={handlePointerDown({ type: 'feather' })}
           />
         )}
 
