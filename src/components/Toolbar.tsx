@@ -2,6 +2,7 @@ import { useEditorStore } from '../state/editor-store'
 import { triggerFileInput } from '../utils/file-io'
 import { saveRecentFile } from '../utils/recent-files'
 import { RecentDropdown } from './RecentDropdown'
+import { SRGB_TO_LINEAR_LUT } from '../raw/dng-parser'
 import type { WorkerResponse } from '../raw/raw-worker'
 
 // Map EXIF orientation to rotation degrees
@@ -27,22 +28,64 @@ function getRawWorker(): Worker {
   return rawWorker
 }
 
+const WORKER_TIMEOUT = 30_000 // 30s timeout
+
 function processFileInWorker(file: File): Promise<{ data: Float32Array; width: number; height: number; orientation: number }> {
   return new Promise((resolve, reject) => {
     const worker = getRawWorker()
-    // Terminate any in-progress work by replacing the handler
+    const timer = setTimeout(() => {
+      reject(new Error('timeout'))
+    }, WORKER_TIMEOUT)
+
     worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+      clearTimeout(timer)
       if ('error' in e.data) {
         reject(new Error(e.data.error))
       } else {
         resolve(e.data)
       }
     }
-    worker.onerror = (err) => reject(new Error(err.message || 'Worker error'))
+    worker.onerror = (err) => {
+      clearTimeout(timer)
+      reject(new Error(err.message || 'Worker error'))
+    }
     file.arrayBuffer().then((buffer) => {
       worker.postMessage({ buffer, fileName: file.name }, [buffer])
-    }).catch(reject)
+    }).catch((err) => { clearTimeout(timer); reject(err) })
   })
+}
+
+// Main-thread fallback for when the worker fails or times out
+const MAX_PIXELS = 8_000_000
+async function processFileOnMainThread(file: File): Promise<{ data: Float32Array; width: number; height: number; orientation: number }> {
+  const blob = new Blob([await file.arrayBuffer()], { type: file.type })
+  const bitmap = await createImageBitmap(blob)
+  let w = bitmap.width
+  let h = bitmap.height
+
+  if (w * h > MAX_PIXELS) {
+    const scale = Math.sqrt(MAX_PIXELS / (w * h))
+    w = Math.round(w * scale)
+    h = Math.round(h * scale)
+  }
+
+  const canvas = new OffscreenCanvas(w, h)
+  const ctx = canvas.getContext('2d')!
+  ctx.drawImage(bitmap, 0, 0, w, h)
+  bitmap.close()
+  const imgData = ctx.getImageData(0, 0, w, h)
+  const pixels = imgData.data
+  const lut = SRGB_TO_LINEAR_LUT
+
+  const floats = new Float32Array(w * h * 4)
+  for (let i = 0; i < pixels.length; i += 4) {
+    floats[i] = lut[pixels[i]]
+    floats[i + 1] = lut[pixels[i + 1]]
+    floats[i + 2] = lut[pixels[i + 2]]
+    floats[i + 3] = 1.0
+  }
+
+  return { data: floats, width: w, height: h, orientation: 1 }
 }
 
 export function Toolbar() {
@@ -79,7 +122,14 @@ export function Toolbar() {
 
       const storeBefore = useEditorStore.getState()
       const isRestore = file.name === storeBefore.fileName && storeBefore.originalImage === null
-      const result = await processFileInWorker(file)
+
+      let result: { data: Float32Array; width: number; height: number; orientation: number }
+      try {
+        result = await processFileInWorker(file)
+      } catch {
+        // Worker failed or timed out — fall back to main thread
+        result = await processFileOnMainThread(file)
+      }
       setImage(result.data, result.width, result.height, file.name)
 
       let finalRotation = isRestore ? storeBefore.rotation : 0
