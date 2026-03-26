@@ -6,11 +6,22 @@ out vec4 fragColor;
 
 uniform sampler2D uOriginal;  // Original image (raw texture, needs flip+rotation)
 uniform sampler2D uAdjusted;  // Global-only adjusted image (FBO output OR raw texture)
-uniform sampler2D uMasked;    // Global+mask adjusted image (FBO output)
 uniform sampler2D uMask;      // Mask texture (raw data, needs Y-flip)
 uniform bool uHasMask;
 uniform bool uInvertMask;
 uniform float uSharpness;     // 0 to 100
+
+// Mask adjustment uniforms (applied on top of global adjustments)
+uniform float uMaskExposure;
+uniform float uMaskContrast;
+uniform float uMaskHighlights;
+uniform float uMaskShadows;
+uniform float uMaskWhites;
+uniform float uMaskBlacks;
+uniform float uMaskTemperature;
+uniform float uMaskTint;
+uniform float uMaskSaturation;
+uniform float uMaskVibrance;
 
 // Rotation (0, 1, 2, 3 = 0°, 90°, 180°, 270° CW)
 uniform int uRotation;
@@ -37,6 +48,55 @@ vec3 linearToSrgb(vec3 c) {
   return mix(lo, hi, step(vec3(0.0031308), c));
 }
 
+// Apply mask adjustments to a linear-space color
+vec3 applyMaskAdjustments(vec3 color) {
+  // Exposure (linear space)
+  color *= pow(2.0, uMaskExposure);
+
+  // White balance (linear space)
+  float mTemp = uMaskTemperature / 100.0;
+  float mTint = uMaskTint / 100.0;
+  color.r *= 1.0 + mTemp * 0.3;
+  color.b *= 1.0 - mTemp * 0.3;
+  color.g *= 1.0 + mTint * 0.1;
+  color.r *= 1.0 - mTint * 0.05;
+  color.b *= 1.0 - mTint * 0.05;
+  color = max(color, vec3(0.0));
+
+  // Convert to perceptual space for tone adjustments
+  vec3 gamma = pow(color, vec3(1.0/2.2));
+  float lum = dot(gamma, vec3(0.2126, 0.7152, 0.0722));
+
+  // Whites / Blacks / Highlights / Shadows
+  gamma += smoothstep(0.5, 1.0, lum) * (uMaskWhites / 200.0);
+  gamma += (1.0 - smoothstep(0.0, 0.5, lum)) * (uMaskBlacks / 200.0);
+  gamma += smoothstep(0.3, 0.9, lum) * (uMaskHighlights / 200.0);
+  gamma += (1.0 - smoothstep(0.1, 0.7, lum)) * (uMaskShadows / 200.0);
+
+  // Contrast
+  float contrastFactor = 1.0 + uMaskContrast / 100.0;
+  gamma = (gamma - 0.5) * contrastFactor + 0.5;
+  gamma = clamp(gamma, 0.0, 1.0);
+
+  // Vibrance (selective saturation)
+  float vib = uMaskVibrance / 100.0;
+  float maxCh = max(gamma.r, max(gamma.g, gamma.b));
+  float minCh = min(gamma.r, min(gamma.g, gamma.b));
+  float curSat = (maxCh - minCh) / max(maxCh, 0.001);
+  float vibAmt = vib * (1.0 - curSat);
+  vec3 vibGray = vec3(lum);
+  gamma = mix(gamma, mix(vibGray, gamma, 1.0 + vibAmt), 1.0);
+
+  // Saturation
+  float sat = 1.0 + uMaskSaturation / 100.0;
+  vec3 gray = vec3(dot(gamma, vec3(0.2126, 0.7152, 0.0722)));
+  gamma = mix(gray, gamma, sat);
+  gamma = clamp(gamma, 0.0, 1.0);
+
+  // Back to linear
+  return pow(gamma, vec3(2.2));
+}
+
 void main() {
   // If uDirectSample, uAdjusted is a raw texture → apply flip+rotation
   // Otherwise, uAdjusted is the FBO output → already correctly oriented
@@ -48,9 +108,9 @@ void main() {
     float mask = texture(uMask, vec2(vUv.x, 1.0 - vUv.y)).r;
     if (uInvertMask) mask = 1.0 - mask;
 
-    // Blend between global-adjusted and (global+mask)-adjusted in linear space
-    vec3 masked = texture(uMasked, vUv).rgb;
-    vec3 blended = mix(adjusted, masked, mask);
+    // Apply mask adjustments on top of global-adjusted result, blend by mask
+    vec3 maskResult = applyMaskAdjustments(adjusted);
+    vec3 blended = mix(adjusted, maskResult, mask);
 
     // Convert to sRGB for display
     vec3 output_color = linearToSrgb(blended);
