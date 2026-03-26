@@ -1,7 +1,7 @@
 import { createProgram, VERTEX_SHADER } from './shader-compiler'
 import { createFloatTexture, createMaskTexture, createFramebuffer, updateMaskTexture, type Framebuffer } from './textures'
 import type { GlobalAdjustments } from '../state/types'
-import type { Mask } from '../masks/types'
+import type { MaskAdjustments } from '../masks/types'
 import adjustShader from './shaders/adjust.glsl?raw'
 import compositeShader from './shaders/composite.glsl?raw'
 
@@ -11,11 +11,14 @@ export class RenderPipeline {
   private compositeProgram: WebGLProgram
   private originalTexture: WebGLTexture | null = null
   private adjustFbo: Framebuffer | null = null
+  private maskedFbo: Framebuffer | null = null  // global+mask adjustments
   private maskTexture: WebGLTexture | null = null
   private imageWidth = 0
   private imageHeight = 0
   private vao: WebGLVertexArrayObject
   private canvas: HTMLCanvasElement
+  private adjustUniforms: Map<string, WebGLUniformLocation | null> = new Map()
+  private compositeUniforms: Map<string, WebGLUniformLocation | null> = new Map()
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -35,8 +38,32 @@ export class RenderPipeline {
     this.adjustProgram = createProgram(gl, VERTEX_SHADER, adjustShader)
     this.compositeProgram = createProgram(gl, VERTEX_SHADER, compositeShader)
 
+    // Cache uniform locations to avoid per-frame lookups
+    const adjustUniformNames = [
+      'uImage', 'uExposure', 'uContrast', 'uHighlights', 'uShadows',
+      'uWhites', 'uBlacks', 'uTemperature', 'uTint', 'uVibrance', 'uSaturation',
+      ...Array.from({ length: 8 }, (_, i) => `uHslHue[${i}]`),
+      ...Array.from({ length: 8 }, (_, i) => `uHslSat[${i}]`),
+      ...Array.from({ length: 8 }, (_, i) => `uHslLum[${i}]`),
+      'uShadowsHue', 'uShadowsSat', 'uMidtonesHue', 'uMidtonesSat',
+      'uHighlightsHue', 'uHighlightsSat', 'uRotation',
+    ]
+    this.cacheUniforms(this.adjustProgram, this.adjustUniforms, adjustUniformNames)
+
+    const compositeUniformNames = [
+      'uOriginal', 'uAdjusted', 'uMasked', 'uMask', 'uHasMask', 'uInvertMask',
+      'uSharpness', 'uRotation', 'uDirectSample',
+    ]
+    this.cacheUniforms(this.compositeProgram, this.compositeUniforms, compositeUniformNames)
+
     // Empty VAO for full-screen triangle
     this.vao = gl.createVertexArray()!
+  }
+
+  private cacheUniforms(program: WebGLProgram, cache: Map<string, WebGLUniformLocation | null>, names: string[]): void {
+    for (const name of names) {
+      cache.set(name, this.gl.getUniformLocation(program, name))
+    }
   }
 
   uploadImage(data: Float32Array, width: number, height: number): void {
@@ -48,11 +75,16 @@ export class RenderPipeline {
       gl.deleteFramebuffer(this.adjustFbo.fbo)
       gl.deleteTexture(this.adjustFbo.texture)
     }
+    if (this.maskedFbo) {
+      gl.deleteFramebuffer(this.maskedFbo.fbo)
+      gl.deleteTexture(this.maskedFbo.texture)
+    }
 
     this.imageWidth = width
     this.imageHeight = height
     this.originalTexture = createFloatTexture(gl, width, height, data)
     this.adjustFbo = createFramebuffer(gl, width, height)
+    this.maskedFbo = createFramebuffer(gl, width, height)
 
     // Create a default all-white mask
     const maskData = new Uint8Array(width * height).fill(255)
@@ -67,14 +99,15 @@ export class RenderPipeline {
 
   render(
     adjustments: GlobalAdjustments,
-    activeMask: Mask | null,
+    hasMasks: boolean,
     canvasWidth: number,
     canvasHeight: number,
     showOriginal: boolean,
     rotation: number = 0,
+    maskAdjustments: MaskAdjustments | null = null,
   ): void {
     const gl = this.gl
-    if (!this.originalTexture || !this.adjustFbo || !this.maskTexture) return
+    if (!this.originalTexture || !this.adjustFbo || !this.maskedFbo || !this.maskTexture) return
 
     const rotationSteps = Math.round(rotation / 90) % 4
 
@@ -83,28 +116,45 @@ export class RenderPipeline {
       return
     }
 
-    // Pass 1: Apply adjustments (render to FBO)
+    // Pass 1: Apply global adjustments (render to adjustFbo)
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.adjustFbo.fbo)
     gl.viewport(0, 0, this.imageWidth, this.imageHeight)
     gl.useProgram(this.adjustProgram)
     gl.bindVertexArray(this.vao)
 
-    // Bind original image
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.originalTexture)
-    gl.uniform1i(gl.getUniformLocation(this.adjustProgram, 'uImage'), 0)
+    gl.uniform1i(this.adjustUniforms.get('uImage')!, 0)
 
-    // Set adjustment uniforms
-    this.setAdjustmentUniforms(this.adjustProgram, adjustments)
-    // Set rotation
-    gl.uniform1i(gl.getUniformLocation(this.adjustProgram, 'uRotation'), rotationSteps)
+    this.setAdjustmentUniforms(adjustments)
+    gl.uniform1i(this.adjustUniforms.get('uRotation')!, rotationSteps)
 
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 
-    // Pass 2: Composite (render to screen)
+    // Pass 2: Apply global + mask adjustments (render to maskedFbo)
+    if (hasMasks && maskAdjustments) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.maskedFbo.fbo)
+      gl.viewport(0, 0, this.imageWidth, this.imageHeight)
+      gl.useProgram(this.adjustProgram)
+      gl.bindVertexArray(this.vao)
+
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, this.originalTexture)
+      gl.uniform1i(this.adjustUniforms.get('uImage')!, 0)
+
+      // Set combined global + mask adjustment uniforms
+      this.setAdjustmentUniforms(this.combineAdjustments(adjustments, maskAdjustments))
+      gl.uniform1i(this.adjustUniforms.get('uRotation')!, rotationSteps)
+
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+    }
+
+    // Pass 3: Composite (render to screen)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-    this.canvas.width = canvasWidth
-    this.canvas.height = canvasHeight
+    if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
+      this.canvas.width = canvasWidth
+      this.canvas.height = canvasHeight
+    }
     gl.viewport(0, 0, canvasWidth, canvasHeight)
     gl.useProgram(this.compositeProgram)
     gl.bindVertexArray(this.vao)
@@ -112,24 +162,28 @@ export class RenderPipeline {
     // Bind original
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.originalTexture)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uOriginal'), 0)
+    gl.uniform1i(this.compositeUniforms.get('uOriginal')!, 0)
 
-    // Bind adjusted
+    // Bind global-adjusted
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.adjustFbo.texture)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uAdjusted'), 1)
+    gl.uniform1i(this.compositeUniforms.get('uAdjusted')!, 1)
+
+    // Bind global+mask-adjusted (or same as adjusted if no masks)
+    gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D, hasMasks && maskAdjustments ? this.maskedFbo.texture : this.adjustFbo.texture)
+    gl.uniform1i(this.compositeUniforms.get('uMasked')!, 2)
 
     // Bind mask
-    gl.activeTexture(gl.TEXTURE2)
+    gl.activeTexture(gl.TEXTURE3)
     gl.bindTexture(gl.TEXTURE_2D, this.maskTexture)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uMask'), 2)
+    gl.uniform1i(this.compositeUniforms.get('uMask')!, 3)
 
-    const hasMask = activeMask !== null
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uHasMask'), hasMask ? 1 : 0)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uInvertMask'), hasMask && activeMask.inverted ? 1 : 0)
-    gl.uniform1f(gl.getUniformLocation(this.compositeProgram, 'uSharpness'), adjustments.sharpness)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uRotation'), rotationSteps)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uDirectSample'), 0) // FBO output, already oriented
+    gl.uniform1i(this.compositeUniforms.get('uHasMask')!, hasMasks ? 1 : 0)
+    gl.uniform1i(this.compositeUniforms.get('uInvertMask')!, 0)
+    gl.uniform1f(this.compositeUniforms.get('uSharpness')!, adjustments.sharpness)
+    gl.uniform1i(this.compositeUniforms.get('uRotation')!, rotationSteps)
+    gl.uniform1i(this.compositeUniforms.get('uDirectSample')!, 0)
 
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
@@ -137,8 +191,9 @@ export class RenderPipeline {
   // Render at full resolution for export
   renderFullRes(
     adjustments: GlobalAdjustments,
-    activeMask: Mask | null,
+    hasMasks: boolean,
     rotation: number = 0,
+    maskAdjustments: MaskAdjustments | null = null,
   ): HTMLCanvasElement {
     const exportCanvas = document.createElement('canvas')
     exportCanvas.width = this.imageWidth
@@ -169,43 +224,49 @@ export class RenderPipeline {
     mainGl.bindFramebuffer(mainGl.FRAMEBUFFER, null)
     mainGl.deleteFramebuffer(fbo)
 
-    // Convert RGBA back to RGB for upload
-    const rgb = new Float32Array(this.imageWidth * this.imageHeight * 3)
-    for (let i = 0; i < this.imageWidth * this.imageHeight; i++) {
-      rgb[i * 3] = pixels[i * 4]
-      rgb[i * 3 + 1] = pixels[i * 4 + 1]
-      rgb[i * 3 + 2] = pixels[i * 4 + 2]
-    }
-
-    const origTex = createFloatTexture(gl, this.imageWidth, this.imageHeight, rgb)
+    const origTex = createFloatTexture(gl, this.imageWidth, this.imageHeight, pixels)
     const adjFbo = createFramebuffer(gl, this.imageWidth, this.imageHeight)
+    const mskFbo = createFramebuffer(gl, this.imageWidth, this.imageHeight)
 
     // Copy mask
     const maskData = new Uint8Array(this.imageWidth * this.imageHeight)
-    // Read mask from main context
-    const maskFbo = mainGl.createFramebuffer()!
-    mainGl.bindFramebuffer(mainGl.FRAMEBUFFER, maskFbo)
+    const maskFboRead = mainGl.createFramebuffer()!
+    mainGl.bindFramebuffer(mainGl.FRAMEBUFFER, maskFboRead)
     mainGl.framebufferTexture2D(mainGl.FRAMEBUFFER, mainGl.COLOR_ATTACHMENT0, mainGl.TEXTURE_2D, this.maskTexture!, 0)
     mainGl.readPixels(0, 0, this.imageWidth, this.imageHeight, mainGl.RED, mainGl.UNSIGNED_BYTE, maskData)
     mainGl.bindFramebuffer(mainGl.FRAMEBUFFER, null)
-    mainGl.deleteFramebuffer(maskFbo)
+    mainGl.deleteFramebuffer(maskFboRead)
 
     const maskTex = createMaskTexture(gl, this.imageWidth, this.imageHeight, maskData)
+    const rotationStepsExport = Math.round(rotation / 90) % 4
 
-    // Pass 1: Adjust
+    // Pass 1: Global adjust
     gl.bindFramebuffer(gl.FRAMEBUFFER, adjFbo.fbo)
     gl.viewport(0, 0, this.imageWidth, this.imageHeight)
     gl.useProgram(adjProg)
     gl.bindVertexArray(vao)
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, origTex)
-    const rotationStepsExport = Math.round(rotation / 90) % 4
     gl.uniform1i(gl.getUniformLocation(adjProg, 'uImage'), 0)
     this.setAdjustmentUniformsOnProgram(gl, adjProg, adjustments)
     gl.uniform1i(gl.getUniformLocation(adjProg, 'uRotation'), rotationStepsExport)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 
-    // Pass 2: Composite
+    // Pass 2: Global + mask adjust (if masks present)
+    if (hasMasks && maskAdjustments) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, mskFbo.fbo)
+      gl.viewport(0, 0, this.imageWidth, this.imageHeight)
+      gl.useProgram(adjProg)
+      gl.bindVertexArray(vao)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, origTex)
+      gl.uniform1i(gl.getUniformLocation(adjProg, 'uImage'), 0)
+      this.setAdjustmentUniformsOnProgram(gl, adjProg, this.combineAdjustments(adjustments, maskAdjustments))
+      gl.uniform1i(gl.getUniformLocation(adjProg, 'uRotation'), rotationStepsExport)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+    }
+
+    // Pass 3: Composite
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     gl.viewport(0, 0, this.imageWidth, this.imageHeight)
     gl.useProgram(compProg)
@@ -217,14 +278,16 @@ export class RenderPipeline {
     gl.bindTexture(gl.TEXTURE_2D, adjFbo.texture)
     gl.uniform1i(gl.getUniformLocation(compProg, 'uAdjusted'), 1)
     gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D, hasMasks && maskAdjustments ? mskFbo.texture : adjFbo.texture)
+    gl.uniform1i(gl.getUniformLocation(compProg, 'uMasked'), 2)
+    gl.activeTexture(gl.TEXTURE3)
     gl.bindTexture(gl.TEXTURE_2D, maskTex)
-    gl.uniform1i(gl.getUniformLocation(compProg, 'uMask'), 2)
-    const hasMask = activeMask !== null
-    gl.uniform1i(gl.getUniformLocation(compProg, 'uHasMask'), hasMask ? 1 : 0)
-    gl.uniform1i(gl.getUniformLocation(compProg, 'uInvertMask'), hasMask && activeMask.inverted ? 1 : 0)
+    gl.uniform1i(gl.getUniformLocation(compProg, 'uMask'), 3)
+    gl.uniform1i(gl.getUniformLocation(compProg, 'uHasMask'), hasMasks ? 1 : 0)
+    gl.uniform1i(gl.getUniformLocation(compProg, 'uInvertMask'), 0)
     gl.uniform1f(gl.getUniformLocation(compProg, 'uSharpness'), adjustments.sharpness)
     gl.uniform1i(gl.getUniformLocation(compProg, 'uRotation'), rotationStepsExport)
-    gl.uniform1i(gl.getUniformLocation(compProg, 'uDirectSample'), 0) // FBO output
+    gl.uniform1i(gl.getUniformLocation(compProg, 'uDirectSample'), 0)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 
     return exportCanvas
@@ -234,26 +297,31 @@ export class RenderPipeline {
   private renderOriginal(canvasWidth: number, canvasHeight: number, rotationSteps: number = 0): void {
     const gl = this.gl
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-    this.canvas.width = canvasWidth
-    this.canvas.height = canvasHeight
+    if (this.canvas.width !== canvasWidth || this.canvas.height !== canvasHeight) {
+      this.canvas.width = canvasWidth
+      this.canvas.height = canvasHeight
+    }
     gl.viewport(0, 0, canvasWidth, canvasHeight)
     gl.useProgram(this.compositeProgram)
     gl.bindVertexArray(this.vao)
 
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.originalTexture!)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uOriginal'), 0)
+    gl.uniform1i(this.compositeUniforms.get('uOriginal')!, 0)
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.originalTexture!)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uAdjusted'), 1)
+    gl.uniform1i(this.compositeUniforms.get('uAdjusted')!, 1)
     gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D, this.originalTexture!)
+    gl.uniform1i(this.compositeUniforms.get('uMasked')!, 2)
+    gl.activeTexture(gl.TEXTURE3)
     gl.bindTexture(gl.TEXTURE_2D, this.maskTexture!)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uMask'), 2)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uHasMask'), 0)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uInvertMask'), 0)
-    gl.uniform1f(gl.getUniformLocation(this.compositeProgram, 'uSharpness'), 0)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uRotation'), rotationSteps)
-    gl.uniform1i(gl.getUniformLocation(this.compositeProgram, 'uDirectSample'), 1) // Raw texture, needs flip+rotation
+    gl.uniform1i(this.compositeUniforms.get('uMask')!, 3)
+    gl.uniform1i(this.compositeUniforms.get('uHasMask')!, 0)
+    gl.uniform1i(this.compositeUniforms.get('uInvertMask')!, 0)
+    gl.uniform1f(this.compositeUniforms.get('uSharpness')!, 0)
+    gl.uniform1i(this.compositeUniforms.get('uRotation')!, rotationSteps)
+    gl.uniform1i(this.compositeUniforms.get('uDirectSample')!, 1)
 
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
@@ -280,8 +348,32 @@ export class RenderPipeline {
     return { r, g, b }
   }
 
-  private setAdjustmentUniforms(program: WebGLProgram, adj: GlobalAdjustments): void {
-    this.setAdjustmentUniformsOnProgram(this.gl, program, adj)
+  private setAdjustmentUniforms(adj: GlobalAdjustments): void {
+    const gl = this.gl
+    gl.uniform1f(this.adjustUniforms.get('uExposure')!, adj.exposure)
+    gl.uniform1f(this.adjustUniforms.get('uContrast')!, adj.contrast)
+    gl.uniform1f(this.adjustUniforms.get('uHighlights')!, adj.highlights)
+    gl.uniform1f(this.adjustUniforms.get('uShadows')!, adj.shadows)
+    gl.uniform1f(this.adjustUniforms.get('uWhites')!, adj.whites)
+    gl.uniform1f(this.adjustUniforms.get('uBlacks')!, adj.blacks)
+    gl.uniform1f(this.adjustUniforms.get('uTemperature')!, adj.temperature)
+    gl.uniform1f(this.adjustUniforms.get('uTint')!, adj.tint)
+    gl.uniform1f(this.adjustUniforms.get('uVibrance')!, adj.vibrance)
+    gl.uniform1f(this.adjustUniforms.get('uSaturation')!, adj.saturation)
+
+    for (let i = 0; i < 8; i++) {
+      gl.uniform1f(this.adjustUniforms.get(`uHslHue[${i}]`)!, adj.hslHue[i])
+      gl.uniform1f(this.adjustUniforms.get(`uHslSat[${i}]`)!, adj.hslSaturation[i])
+      gl.uniform1f(this.adjustUniforms.get(`uHslLum[${i}]`)!, adj.hslLuminance[i])
+    }
+
+    // Color grading
+    gl.uniform1f(this.adjustUniforms.get('uShadowsHue')!, adj.shadowsHue)
+    gl.uniform1f(this.adjustUniforms.get('uShadowsSat')!, adj.shadowsSat)
+    gl.uniform1f(this.adjustUniforms.get('uMidtonesHue')!, adj.midtonesHue)
+    gl.uniform1f(this.adjustUniforms.get('uMidtonesSat')!, adj.midtonesSat)
+    gl.uniform1f(this.adjustUniforms.get('uHighlightsHue')!, adj.highlightsHue)
+    gl.uniform1f(this.adjustUniforms.get('uHighlightsSat')!, adj.highlightsSat)
   }
 
   private setAdjustmentUniformsOnProgram(gl: WebGL2RenderingContext, program: WebGLProgram, adj: GlobalAdjustments): void {
@@ -311,6 +403,23 @@ export class RenderPipeline {
     gl.uniform1f(gl.getUniformLocation(program, 'uHighlightsSat'), adj.highlightsSat)
   }
 
+  // Combine global adjustments with mask-local adjustments (additive)
+  private combineAdjustments(global: GlobalAdjustments, mask: MaskAdjustments): GlobalAdjustments {
+    return {
+      ...global,
+      exposure: global.exposure + mask.exposure,
+      contrast: global.contrast + mask.contrast,
+      highlights: global.highlights + mask.highlights,
+      shadows: global.shadows + mask.shadows,
+      whites: global.whites + mask.whites,
+      blacks: global.blacks + mask.blacks,
+      temperature: global.temperature + mask.temperature,
+      tint: global.tint + mask.tint,
+      saturation: global.saturation + mask.saturation,
+      vibrance: global.vibrance + mask.vibrance,
+    }
+  }
+
   getImageDimensions(): { width: number; height: number } {
     return { width: this.imageWidth, height: this.imageHeight }
   }
@@ -321,6 +430,10 @@ export class RenderPipeline {
     if (this.adjustFbo) {
       gl.deleteFramebuffer(this.adjustFbo.fbo)
       gl.deleteTexture(this.adjustFbo.texture)
+    }
+    if (this.maskedFbo) {
+      gl.deleteFramebuffer(this.maskedFbo.fbo)
+      gl.deleteTexture(this.maskedFbo.texture)
     }
     if (this.maskTexture) gl.deleteTexture(this.maskTexture)
     gl.deleteProgram(this.adjustProgram)

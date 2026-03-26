@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { useEditorStore } from '../state/editor-store'
 import { getPipeline } from './Canvas'
 import { exportJpeg } from '../utils/file-io'
+import type { MaskAdjustments } from '../masks/types'
 
-export function ExportDialog() {
+export function ExportDialog({ showAll = false }: { showAll?: boolean }) {
   const activeTab = useEditorStore((s) => s.activeTab)
   const adjustments = useEditorStore((s) => s.adjustments)
   const masks = useEditorStore((s) => s.masks)
-  const activeMaskId = useEditorStore((s) => s.activeMaskId)
   const originalImage = useEditorStore((s) => s.originalImage)
   const imageWidth = useEditorStore((s) => s.imageWidth)
   const imageHeight = useEditorStore((s) => s.imageHeight)
@@ -15,7 +15,7 @@ export function ExportDialog() {
   const [quality, setQuality] = useState(92)
   const [exporting, setExporting] = useState(false)
 
-  if (activeTab !== 'export') return null
+  if (!showAll && activeTab !== 'export') return null
 
   const handleExport = async () => {
     const pipeline = getPipeline()
@@ -23,8 +23,29 @@ export function ExportDialog() {
 
     setExporting(true)
     try {
-      const activeMask = masks.find((m) => m.id === activeMaskId) ?? null
-      const exportCanvas = pipeline.renderFullRes(adjustments, activeMask, rotation)
+      const enabledMasks = masks.filter((m) => m.enabled)
+      const hasMasks = enabledMasks.length > 0
+
+      let maskAdjustments: MaskAdjustments | null = null
+      if (hasMasks) {
+        const combined: MaskAdjustments = {
+          exposure: 0, contrast: 0, highlights: 0, shadows: 0,
+          whites: 0, blacks: 0, temperature: 0, tint: 0,
+          saturation: 0, vibrance: 0,
+        }
+        for (const m of enabledMasks) {
+          for (const k of Object.keys(combined) as (keyof MaskAdjustments)[]) {
+            combined[k] += m.adjustments[k]
+          }
+        }
+        for (const k of Object.keys(combined) as (keyof MaskAdjustments)[]) {
+          combined[k] /= enabledMasks.length
+        }
+        const hasAdj = Object.values(combined).some((v) => v !== 0)
+        maskAdjustments = hasAdj ? combined : null
+      }
+
+      const exportCanvas = pipeline.renderFullRes(adjustments, hasMasks, rotation, maskAdjustments)
       await exportJpeg(exportCanvas, quality)
     } catch (e) {
       alert(`Export failed: ${e instanceof Error ? e.message : e}`)

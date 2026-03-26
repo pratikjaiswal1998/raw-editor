@@ -90,7 +90,7 @@ export async function loadImageFile(file: File): Promise<RawImage> {
 }
 
 // Extract the embedded JPEG preview from a DNG file
-function extractEmbeddedJpeg(buffer: ArrayBuffer): Blob | null {
+export function extractEmbeddedJpeg(buffer: ArrayBuffer): Blob | null {
   const data = new Uint8Array(buffer)
 
   // Scan for JPEG SOI/EOI markers to find embedded JPEG previews
@@ -146,11 +146,12 @@ async function loadImageFromUrl(url: string): Promise<RawImage> {
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
       const pixels = imgData.data
-      const floats = new Float32Array(canvas.width * canvas.height * 3)
-      for (let i = 0, j = 0; i < pixels.length; i += 4, j += 3) {
-        floats[j] = srgbToLinear(pixels[i] / 255)
-        floats[j + 1] = srgbToLinear(pixels[i + 1] / 255)
-        floats[j + 2] = srgbToLinear(pixels[i + 2] / 255)
+      const floats = new Float32Array(canvas.width * canvas.height * 4)
+      for (let i = 0; i < pixels.length; i += 4) {
+        floats[i] = srgbToLinear(pixels[i] / 255)
+        floats[i + 1] = srgbToLinear(pixels[i + 1] / 255)
+        floats[i + 2] = srgbToLinear(pixels[i + 2] / 255)
+        floats[i + 3] = 1.0
       }
 
       resolve({
@@ -180,11 +181,12 @@ async function loadAsRegularImage(file: File): Promise<RawImage> {
       const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
 
       const pixels = imgData.data
-      const floats = new Float32Array(bitmap.width * bitmap.height * 3)
-      for (let i = 0, j = 0; i < pixels.length; i += 4, j += 3) {
-        floats[j] = srgbToLinear(pixels[i] / 255)
-        floats[j + 1] = srgbToLinear(pixels[i + 1] / 255)
-        floats[j + 2] = srgbToLinear(pixels[i + 2] / 255)
+      const floats = new Float32Array(bitmap.width * bitmap.height * 4)
+      for (let i = 0; i < pixels.length; i += 4) {
+        floats[i] = srgbToLinear(pixels[i] / 255)
+        floats[i + 1] = srgbToLinear(pixels[i + 1] / 255)
+        floats[i + 2] = srgbToLinear(pixels[i + 2] / 255)
+        floats[i + 3] = 1.0
       }
 
       return {
@@ -201,11 +203,11 @@ async function loadAsRegularImage(file: File): Promise<RawImage> {
   }
 }
 
-function srgbToLinear(c: number): number {
+export function srgbToLinear(c: number): number {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
 }
 
-function createDefaultMetadata(width: number, height: number): DngMetadata {
+export function createDefaultMetadata(width: number, height: number): DngMetadata {
   return {
     width, height,
     bitsPerSample: 8,
@@ -442,7 +444,6 @@ function readUncompressed(view: DataView, meta: DngMetadata, le: boolean): Float
 
   const pixelCount = width * height
   const channels = samplesPerPixel === 1 ? 1 : 3
-  const output = new Float32Array(pixelCount * (channels === 1 ? 1 : 3))
 
   const offsets = meta.stripOffsets.length ? meta.stripOffsets : meta.tileOffsets
   if (offsets.length === 0) throw new Error('No strip or tile offsets found')
@@ -450,20 +451,41 @@ function readUncompressed(view: DataView, meta: DngMetadata, le: boolean): Float
   let srcOffset = offsets[0]
   const bytesPerSample = Math.ceil(bitsPerSample / 8)
 
-  for (let i = 0; i < pixelCount * channels; i++) {
-    let value: number
-    if (bytesPerSample === 1) {
-      value = view.getUint8(srcOffset)
-    } else if (bytesPerSample === 2) {
-      value = view.getUint16(srcOffset, le)
-    } else {
-      value = view.getUint32(srcOffset, le)
+  if (channels === 1) {
+    // Single-channel Bayer mosaic — will go through demosaic()
+    const output = new Float32Array(pixelCount)
+    for (let i = 0; i < pixelCount; i++) {
+      let value: number
+      if (bytesPerSample === 1) {
+        value = view.getUint8(srcOffset)
+      } else if (bytesPerSample === 2) {
+        value = view.getUint16(srcOffset, le)
+      } else {
+        value = view.getUint32(srcOffset, le)
+      }
+      srcOffset += bytesPerSample
+      output[i] = Math.max(0, Math.min(1, (value - blackLevel) / range))
     }
-    srcOffset += bytesPerSample
-
-    output[i] = Math.max(0, Math.min(1, (value - blackLevel) / range))
+    return output
   }
 
+  // 3-channel linear DNG — output as RGBA
+  const output = new Float32Array(pixelCount * 4)
+  for (let i = 0; i < pixelCount; i++) {
+    for (let c = 0; c < 3; c++) {
+      let value: number
+      if (bytesPerSample === 1) {
+        value = view.getUint8(srcOffset)
+      } else if (bytesPerSample === 2) {
+        value = view.getUint16(srcOffset, le)
+      } else {
+        value = view.getUint32(srcOffset, le)
+      }
+      srcOffset += bytesPerSample
+      output[i * 4 + c] = Math.max(0, Math.min(1, (value - blackLevel) / range))
+    }
+    output[i * 4 + 3] = 1.0
+  }
   return output
 }
 
@@ -479,38 +501,80 @@ function decodeLosslessJpeg(buffer: ArrayBuffer, meta: DngMetadata): Float32Arra
   const blackLevel = meta.blackLevel[0] || 0
   const whiteLevel = meta.whiteLevel[0] || ((1 << meta.bitsPerSample) - 1)
   const range = whiteLevel - blackLevel
-  const output = new Float32Array(width * height * (channels === 1 ? 1 : 3))
+
+  if (channels === 1) {
+    // Single-channel Bayer mosaic — will go through demosaic()
+    const output = new Float32Array(width * height)
+
+    if (meta.tileWidth > 0 && meta.tileLength > 0) {
+      const tilesX = Math.ceil(width / meta.tileWidth)
+      for (let t = 0; t < offsets.length; t++) {
+        const tileX = (t % tilesX) * meta.tileWidth
+        const tileY = Math.floor(t / tilesX) * meta.tileLength
+        const tileData = new Uint8Array(buffer, offsets[t], counts[t])
+        const decoded = decodeLosslessJpegData(tileData, meta.tileWidth, meta.tileLength, 1)
+        for (let y = 0; y < meta.tileLength && tileY + y < height; y++) {
+          for (let x = 0; x < meta.tileWidth && tileX + x < width; x++) {
+            const si = y * meta.tileWidth + x
+            const di = (tileY + y) * width + (tileX + x)
+            output[di] = Math.max(0, Math.min(1, (decoded[si] - blackLevel) / range))
+          }
+        }
+      }
+    } else {
+      let row = 0
+      for (let s = 0; s < offsets.length; s++) {
+        const stripRows = Math.min(meta.rowsPerStrip, height - row)
+        const stripData = new Uint8Array(buffer, offsets[s], counts[s])
+        const decoded = decodeLosslessJpegData(stripData, width, stripRows, 1)
+        for (let i = 0; i < decoded.length; i++) {
+          const outIdx = row * width + i
+          if (outIdx < output.length) {
+            output[outIdx] = Math.max(0, Math.min(1, (decoded[i] - blackLevel) / range))
+          }
+        }
+        row += stripRows
+      }
+    }
+
+    return output
+  }
+
+  // 3-channel linear DNG — output as RGBA
+  const output = new Float32Array(width * height * 4)
 
   if (meta.tileWidth > 0 && meta.tileLength > 0) {
-    // Tiled data
     const tilesX = Math.ceil(width / meta.tileWidth)
     for (let t = 0; t < offsets.length; t++) {
       const tileX = (t % tilesX) * meta.tileWidth
       const tileY = Math.floor(t / tilesX) * meta.tileLength
       const tileData = new Uint8Array(buffer, offsets[t], counts[t])
-      const decoded = decodeLosslessJpegData(tileData, meta.tileWidth, meta.tileLength, channels)
-      // Copy tile into output
+      const decoded = decodeLosslessJpegData(tileData, meta.tileWidth, meta.tileLength, 3)
       for (let y = 0; y < meta.tileLength && tileY + y < height; y++) {
         for (let x = 0; x < meta.tileWidth && tileX + x < width; x++) {
-          for (let c = 0; c < (channels === 1 ? 1 : 3); c++) {
-            const si = (y * meta.tileWidth + x) * channels + c
-            const di = ((tileY + y) * width + (tileX + x)) * (channels === 1 ? 1 : 3) + c
-            output[di] = Math.max(0, Math.min(1, (decoded[si] - blackLevel) / range))
-          }
+          const si = (y * meta.tileWidth + x) * 3
+          const di = ((tileY + y) * width + (tileX + x)) * 4
+          output[di] = Math.max(0, Math.min(1, (decoded[si] - blackLevel) / range))
+          output[di + 1] = Math.max(0, Math.min(1, (decoded[si + 1] - blackLevel) / range))
+          output[di + 2] = Math.max(0, Math.min(1, (decoded[si + 2] - blackLevel) / range))
+          output[di + 3] = 1.0
         }
       }
     }
   } else {
-    // Strip data - decode each strip
     let row = 0
     for (let s = 0; s < offsets.length; s++) {
       const stripRows = Math.min(meta.rowsPerStrip, height - row)
       const stripData = new Uint8Array(buffer, offsets[s], counts[s])
-      const decoded = decodeLosslessJpegData(stripData, width, stripRows, channels)
-      for (let i = 0; i < decoded.length; i++) {
-        const outIdx = row * width * (channels === 1 ? 1 : 3) + i
-        if (outIdx < output.length) {
-          output[outIdx] = Math.max(0, Math.min(1, (decoded[i] - blackLevel) / range))
+      const decoded = decodeLosslessJpegData(stripData, width, stripRows, 3)
+      const pixelsInStrip = decoded.length / 3
+      for (let i = 0; i < pixelsInStrip; i++) {
+        const outIdx = (row * width + i) * 4
+        if (outIdx + 3 < output.length) {
+          output[outIdx] = Math.max(0, Math.min(1, (decoded[i * 3] - blackLevel) / range))
+          output[outIdx + 1] = Math.max(0, Math.min(1, (decoded[i * 3 + 1] - blackLevel) / range))
+          output[outIdx + 2] = Math.max(0, Math.min(1, (decoded[i * 3 + 2] - blackLevel) / range))
+          output[outIdx + 3] = 1.0
         }
       }
       row += stripRows
@@ -736,9 +800,9 @@ async function readDeflateCompressed(buffer: ArrayBuffer, meta: DngMetadata): Pr
   const blackLevel = meta.blackLevel[0] || 0
   const whiteLevel = meta.whiteLevel[0] || ((1 << bitsPerSample) - 1)
   const range = whiteLevel - blackLevel
-  const output = new Float32Array(width * height * (channels === 1 ? 1 : 3))
 
-  let outIdx = 0
+  // Decompress all strips/tiles first
+  const allDecompressed: Uint8Array[] = []
   for (let s = 0; s < offsets.length; s++) {
     const compressed = new Uint8Array(buffer, offsets[s], counts[s])
     const ds = new DecompressionStream('deflate')
@@ -758,14 +822,50 @@ async function readDeflateCompressed(buffer: ArrayBuffer, meta: DngMetadata): Pr
       decompressed.set(chunk, offset)
       offset += chunk.length
     }
-    const dv = new DataView(decompressed.buffer)
-    const bytesPerSample = Math.ceil(bitsPerSample / 8)
-    for (let i = 0; i < decompressed.length; i += bytesPerSample) {
-      const value = bytesPerSample === 1 ? dv.getUint8(i) : dv.getUint16(i, true)
-      if (outIdx < output.length) {
-        output[outIdx++] = Math.max(0, Math.min(1, (value - blackLevel) / range))
+    allDecompressed.push(decompressed)
+  }
+
+  const bytesPerSample = Math.ceil(bitsPerSample / 8)
+
+  if (channels === 1) {
+    // Single-channel Bayer mosaic
+    const output = new Float32Array(width * height)
+    let outIdx = 0
+    for (const decompressed of allDecompressed) {
+      const dv = new DataView(decompressed.buffer)
+      for (let i = 0; i < decompressed.length; i += bytesPerSample) {
+        const value = bytesPerSample === 1 ? dv.getUint8(i) : dv.getUint16(i, true)
+        if (outIdx < output.length) {
+          output[outIdx++] = Math.max(0, Math.min(1, (value - blackLevel) / range))
+        }
       }
     }
+    return output
+  }
+
+  // 3-channel linear DNG — output as RGBA
+  const output = new Float32Array(width * height * 4)
+  let pixelIdx = 0
+  let channelInPixel = 0
+  for (const decompressed of allDecompressed) {
+    const dv = new DataView(decompressed.buffer)
+    for (let i = 0; i < decompressed.length; i += bytesPerSample) {
+      const value = bytesPerSample === 1 ? dv.getUint8(i) : dv.getUint16(i, true)
+      const outIdx = pixelIdx * 4 + channelInPixel
+      if (outIdx < output.length) {
+        output[outIdx] = Math.max(0, Math.min(1, (value - blackLevel) / range))
+      }
+      channelInPixel++
+      if (channelInPixel === 3) {
+        output[pixelIdx * 4 + 3] = 1.0
+        channelInPixel = 0
+        pixelIdx++
+      }
+    }
+  }
+  // Fill alpha for any remaining pixel
+  if (channelInPixel > 0) {
+    output[pixelIdx * 4 + 3] = 1.0
   }
 
   return output

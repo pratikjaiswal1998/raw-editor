@@ -19,20 +19,8 @@ export function createFloatTexture(
     console.warn('EXT_color_buffer_float not available')
   }
 
-  // Convert RGB float data to RGBA
-  let rgba: Float32Array | null = null
-  if (data) {
-    const pixelCount = width * height
-    rgba = new Float32Array(pixelCount * 4)
-    for (let i = 0; i < pixelCount; i++) {
-      rgba[i * 4] = data[i * 3]
-      rgba[i * 4 + 1] = data[i * 3 + 1]
-      rgba[i * 4 + 2] = data[i * 3 + 2]
-      rgba[i * 4 + 3] = 1.0
-    }
-  }
-
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.FLOAT, rgba)
+  // Data is already RGBA Float32Array (w*h*4) — upload directly
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.FLOAT, data)
 
   return tex
 }

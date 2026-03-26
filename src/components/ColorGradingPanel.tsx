@@ -137,14 +137,14 @@ function ColorWheel({ label, hue, saturation, onHueChange, onSatChange }: ColorW
   )
 }
 
-export function ColorGradingPanel() {
+export function ColorGradingPanel({ showAll = false }: { showAll?: boolean }) {
   const activeTab = useEditorStore((s) => s.activeTab)
   const adjustments = useEditorStore((s) => s.adjustments)
   const setAdjustment = useEditorStore((s) => s.setAdjustment)
   const pushHistory = useEditorStore((s) => s.pushHistory)
   const committed = useRef(false)
 
-  if (activeTab !== 'grading') return null
+  if (!showAll && activeTab !== 'grading') return null
 
   const handleChange = <K extends keyof GlobalAdjustments>(key: K, value: GlobalAdjustments[K]) => {
     if (!committed.current) {

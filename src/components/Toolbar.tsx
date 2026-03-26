@@ -1,7 +1,8 @@
 import { useEditorStore } from '../state/editor-store'
-import { loadImageFile } from '../raw/dng-parser'
 import { triggerFileInput } from '../utils/file-io'
 import { saveRecentFile } from '../utils/recent-files'
+import { RecentDropdown } from './RecentDropdown'
+import type { WorkerResponse } from '../raw/raw-worker'
 
 // Map EXIF orientation to rotation degrees
 function exifOrientationToRotation(orientation: number): number {
@@ -15,6 +16,34 @@ function exifOrientationToRotation(orientation: number): number {
 
 const ACCEPT_TYPES = [{ description: 'Image files', accept: { 'image/*': ['.dng', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.heic'] as `.${string}`[] } }]
 const ACCEPT_STRING = '.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic'
+
+// Module-level worker instance (reused across opens)
+let rawWorker: Worker | null = null
+
+function getRawWorker(): Worker {
+  if (!rawWorker) {
+    rawWorker = new Worker(new URL('../raw/raw-worker.ts', import.meta.url), { type: 'module' })
+  }
+  return rawWorker
+}
+
+function processFileInWorker(file: File): Promise<{ data: Float32Array; width: number; height: number; orientation: number }> {
+  return new Promise((resolve, reject) => {
+    const worker = getRawWorker()
+    // Terminate any in-progress work by replacing the handler
+    worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+      if ('error' in e.data) {
+        reject(new Error(e.data.error))
+      } else {
+        resolve(e.data)
+      }
+    }
+    worker.onerror = (err) => reject(new Error(err.message || 'Worker error'))
+    file.arrayBuffer().then((buffer) => {
+      worker.postMessage({ buffer, fileName: file.name }, [buffer])
+    }).catch(reject)
+  })
+}
 
 export function Toolbar() {
   const fileName = useEditorStore((s) => s.fileName)
@@ -50,12 +79,12 @@ export function Toolbar() {
 
       const storeBefore = useEditorStore.getState()
       const isRestore = file.name === storeBefore.fileName && storeBefore.originalImage === null
-      const rawImage = await loadImageFile(file)
-      setImage(rawImage.data, rawImage.width, rawImage.height, file.name)
+      const result = await processFileInWorker(file)
+      setImage(result.data, result.width, result.height, file.name)
 
       let finalRotation = isRestore ? storeBefore.rotation : 0
       if (!isRestore) {
-        const autoRotation = exifOrientationToRotation(rawImage.metadata.orientation)
+        const autoRotation = exifOrientationToRotation(result.orientation)
         if (autoRotation !== 0) {
           useEditorStore.setState({ rotation: autoRotation })
           finalRotation = autoRotation
@@ -88,6 +117,7 @@ export function Toolbar() {
           </svg>
           <span className="toolbar-label">Open</span>
         </button>
+        <RecentDropdown />
       </div>
 
       <div className="toolbar-center">

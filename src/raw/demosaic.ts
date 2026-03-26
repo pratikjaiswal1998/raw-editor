@@ -8,7 +8,7 @@ export function demosaic(
   height: number,
   cfaPattern: number[],
 ): Float32Array {
-  const output = new Float32Array(width * height * 3)
+  const output = new Float32Array(width * height * 4)
 
   // Determine which color each position in the 2x2 pattern represents
   // cfaPattern[0] = top-left, [1] = top-right, [2] = bottom-left, [3] = bottom-right
@@ -29,7 +29,7 @@ export function demosaic(
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 3
+      const idx = (y * width + x) * 4
       const color = getColor(x, y)
       const value = getRaw(x, y)
 
@@ -71,6 +71,7 @@ export function demosaic(
       output[idx] = Math.max(0, Math.min(1, r))
       output[idx + 1] = Math.max(0, Math.min(1, g))
       output[idx + 2] = Math.max(0, Math.min(1, b))
+      output[idx + 3] = 1.0
     }
   }
 

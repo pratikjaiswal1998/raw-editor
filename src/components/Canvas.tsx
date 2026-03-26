@@ -1,14 +1,17 @@
 import { useRef, useEffect, useCallback } from 'react'
 import { RenderPipeline } from '../engine/pipeline'
 import { useEditorStore } from '../state/editor-store'
-import { generateMaskTexture } from '../masks/mask-engine'
 import { MaskOverlay } from './MaskOverlay'
+import type { MaskAdjustments } from '../masks/types'
 
 let pipeline: RenderPipeline | null = null
 
 export function getPipeline(): RenderPipeline | null {
   return pipeline
 }
+
+// Module-level mask worker
+const maskWorker = new Worker(new URL('../masks/mask-worker.ts', import.meta.url), { type: 'module' })
 
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -19,11 +22,8 @@ export function Canvas() {
   const fileName = useEditorStore((s) => s.fileName)
   const imageWidth = useEditorStore((s) => s.imageWidth)
   const imageHeight = useEditorStore((s) => s.imageHeight)
-  const adjustments = useEditorStore((s) => s.adjustments)
   const masks = useEditorStore((s) => s.masks)
-  const activeMaskId = useEditorStore((s) => s.activeMaskId)
   const showBeforeAfter = useEditorStore((s) => s.showBeforeAfter)
-  const rotation = useEditorStore((s) => s.rotation)
   const zoom = useEditorStore((s) => s.zoom)
   const panX = useEditorStore((s) => s.panX)
   const panY = useEditorStore((s) => s.panY)
@@ -44,23 +44,45 @@ export function Canvas() {
     pipeline.uploadImage(originalImage, imageWidth, imageHeight)
   }, [originalImage, imageWidth, imageHeight])
 
-  // Update mask texture when masks change
+  // Update mask texture when masks change (offloaded to worker)
+  // All enabled masks are combined (union via max blend) into a single texture
   useEffect(() => {
     if (!pipeline || !originalImage) return
-    const activeMask = masks.find((m) => m.id === activeMaskId) ?? null
-    const maskData = generateMaskTexture(activeMask, imageWidth, imageHeight)
-    pipeline.updateMask(maskData)
-  }, [masks, activeMaskId, imageWidth, imageHeight, originalImage])
 
-  // Render loop
+    const enabledMasks = masks.filter((m) => m.enabled)
+
+    if (enabledMasks.length === 0) {
+      // No enabled masks = full white (everything affected by global adjustments)
+      pipeline.updateMask(new Uint8Array(imageWidth * imageHeight).fill(255))
+      return
+    }
+
+    // Send all enabled masks to worker for combined rasterization
+    const handler = (e: MessageEvent) => {
+      if (pipeline) pipeline.updateMask(e.data as Uint8Array)
+    }
+    maskWorker.onmessage = handler
+    maskWorker.postMessage({
+      masks: enabledMasks.map((m) => ({ shape: m.shape, inverted: m.inverted })),
+      width: imageWidth,
+      height: imageHeight,
+    })
+
+    return () => { maskWorker.onmessage = null }
+  }, [masks, imageWidth, imageHeight, originalImage])
+
+  // Render loop — reads from store directly to avoid closure dependencies
   const render = useCallback(() => {
-    if (!pipeline || !originalImage || !containerRef.current) return
+    if (!pipeline || !containerRef.current) return
+
+    // Read current state directly from store (no closure dependency)
+    const state = useEditorStore.getState()
+    if (!state.originalImage) return
 
     const container = containerRef.current
     const dpr = window.devicePixelRatio || 1
+    const { imageWidth, imageHeight, rotation, zoom, masks, adjustments, showBeforeAfter } = state
 
-    // Calculate canvas size to fit image in container
-    // Swap aspect ratio if rotated 90 or 270
     const isRotated = rotation === 90 || rotation === 270
     const effectiveW = isRotated ? imageHeight : imageWidth
     const effectiveH = isRotated ? imageWidth : imageHeight
@@ -80,14 +102,49 @@ export function Canvas() {
     const canvasW = Math.round(displayW * dpr * zoom)
     const canvasH = Math.round(displayH * dpr * zoom)
 
-    const activeMask = masks.find((m) => m.id === activeMaskId) ?? null
+    const enabledMasks = masks.filter((m) => m.enabled)
+    const hasMasks = enabledMasks.length > 0
 
-    pipeline.render(adjustments, activeMask, canvasW, canvasH, showBeforeAfter, rotation)
-  }, [adjustments, masks, activeMaskId, showBeforeAfter, zoom, rotation, originalImage, imageWidth, imageHeight])
+    // Compute combined mask adjustments (average of all enabled masks)
+    let maskAdjustments: MaskAdjustments | null = null
+    if (hasMasks) {
+      const combined: MaskAdjustments = {
+        exposure: 0, contrast: 0, highlights: 0, shadows: 0,
+        whites: 0, blacks: 0, temperature: 0, tint: 0,
+        saturation: 0, vibrance: 0,
+      }
+      for (const m of enabledMasks) {
+        for (const k of Object.keys(combined) as (keyof MaskAdjustments)[]) {
+          combined[k] += m.adjustments[k]
+        }
+      }
+      for (const k of Object.keys(combined) as (keyof MaskAdjustments)[]) {
+        combined[k] /= enabledMasks.length
+      }
+      // Only pass mask adjustments if any are non-zero
+      const hasAdjustments = Object.values(combined).some((v) => v !== 0)
+      maskAdjustments = hasAdjustments ? combined : null
+    }
 
+    pipeline.render(adjustments, hasMasks, canvasW, canvasH, showBeforeAfter, rotation, maskAdjustments)
+  }, []) // Empty deps — reads from store directly
+
+  // Subscribe to store changes and re-render
   useEffect(() => {
-    cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame(render)
+    // Render once immediately
+    const frame = requestAnimationFrame(render)
+
+    // Subscribe to store changes and re-render
+    const unsub = useEditorStore.subscribe(() => {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = requestAnimationFrame(render)
+    })
+
+    return () => {
+      cancelAnimationFrame(frame)
+      cancelAnimationFrame(rafRef.current)
+      unsub()
+    }
   }, [render])
 
   // Touch/mouse pan and zoom

@@ -21,6 +21,9 @@ interface EditorActions {
   setActiveMask: (id: string | null) => void
   updateMaskShape: (id: string, shape: Partial<MaskShape>) => void
   toggleMaskInvert: (id: string) => void
+  toggleMaskEnabled: (id: string) => void
+  duplicateMask: (id: string) => void
+  clearAllMasks: () => void
   updateMaskAdjustment: (id: string, key: string, value: number) => void
 
   // Transform
@@ -97,7 +100,7 @@ export const useEditorStore = create<EditorStore>()(
       imageHeight: height,
       fileName: recent.fileName,
       adjustments: { ...recent.adjustments },
-      masks: recent.masks.map((m) => ({ ...m, shape: { ...m.shape }, adjustments: { ...m.adjustments } })),
+      masks: recent.masks.map((m) => ({ ...m, enabled: m.enabled ?? true, shape: { ...m.shape }, adjustments: { ...m.adjustments } })),
       activeMaskId: null,
       rotation: recent.rotation,
       history: [],
@@ -126,6 +129,7 @@ export const useEditorStore = create<EditorStore>()(
       id,
       shape,
       inverted: false,
+      enabled: true,
       adjustments: { ...DEFAULT_MASK_ADJUSTMENTS },
     }
     const state = get()
@@ -164,6 +168,40 @@ export const useEditorStore = create<EditorStore>()(
         m.id === id ? { ...m, inverted: !m.inverted } : m,
       ),
     })
+  },
+
+  toggleMaskEnabled: (id) => {
+    const state = get()
+    set({
+      masks: state.masks.map((m) =>
+        m.id === id ? { ...m, enabled: !m.enabled } : m,
+      ),
+    })
+  },
+
+  duplicateMask: (id) => {
+    const state = get()
+    const source = state.masks.find((m) => m.id === id)
+    if (!source) return
+    state.pushHistory()
+    const newId = `mask_${Date.now()}`
+    const copy: Mask = {
+      ...source,
+      id: newId,
+      shape: { ...source.shape, x: source.shape.x + 0.05, y: source.shape.y + 0.05 },
+      adjustments: { ...source.adjustments },
+    }
+    set({
+      masks: [...state.masks, copy],
+      activeMaskId: newId,
+    })
+  },
+
+  clearAllMasks: () => {
+    const state = get()
+    if (state.masks.length === 0) return
+    state.pushHistory()
+    set({ masks: [], activeMaskId: null })
   },
 
   updateMaskAdjustment: (id, key, value) => {

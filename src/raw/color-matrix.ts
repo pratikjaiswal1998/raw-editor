@@ -36,9 +36,9 @@ export function applyColorMatrix(data: Float32Array, metadata: DngMetadata): voi
   // Combined matrix: camera RGB -> XYZ -> sRGB
   const combined = multiplyMatrix3x3(xyzToSrgb, camToXyz)
 
-  const pixelCount = data.length / 3
+  const pixelCount = data.length / 4
   for (let i = 0; i < pixelCount; i++) {
-    const idx = i * 3
+    const idx = i * 4
     // Apply white balance
     const r = data[idx] * wbMul[0]
     const g = data[idx + 1] * wbMul[1]
@@ -48,6 +48,7 @@ export function applyColorMatrix(data: Float32Array, metadata: DngMetadata): voi
     data[idx] = Math.max(0, combined[0] * r + combined[1] * g + combined[2] * b)
     data[idx + 1] = Math.max(0, combined[3] * r + combined[4] * g + combined[5] * b)
     data[idx + 2] = Math.max(0, combined[6] * r + combined[7] * g + combined[8] * b)
+    // alpha (idx+3) unchanged
   }
 }
 

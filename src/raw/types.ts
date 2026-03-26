@@ -27,7 +27,7 @@ export interface DngMetadata {
 }
 
 export interface RawImage {
-  data: Float32Array // normalized [0,1] RGB float data
+  data: Float32Array // normalized [0,1] RGBA float data (w*h*4)
   width: number
   height: number
   metadata: DngMetadata

@@ -7,12 +7,10 @@ import { AdjustmentPanel } from './AdjustmentPanel'
 import { ColorGradingPanel } from './ColorGradingPanel'
 import { MaskPanel } from './MaskPanel'
 import { ExportDialog } from './ExportDialog'
-import { RecentTab } from './RecentTab'
 import { updateRecentFileSettings } from '../utils/recent-files'
 import type { AdjustmentTab } from '../state/types'
 
 const TABS: { id: AdjustmentTab; label: string }[] = [
-  { id: 'recent', label: 'Recent' },
   { id: 'light', label: 'Light' },
   { id: 'color', label: 'Color' },
   { id: 'hsl', label: 'HSL' },
@@ -36,6 +34,11 @@ export function Editor() {
   const fileName = useEditorStore((s) => s.fileName)
   const originalImage = useEditorStore((s) => s.originalImage)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // If 'recent' is stored as activeTab (from old session), reset to 'light'
+  useEffect(() => {
+    if (activeTab === 'recent') setActiveTab('light')
+  }, [activeTab, setActiveTab])
 
   // Debounced save of current settings to IndexedDB recent entry (2s after last change)
   useEffect(() => {
@@ -90,10 +93,29 @@ export function Editor() {
           <Canvas />
           <Histogram />
         </div>
+
+        {/* Desktop sidebar — all panels stacked, hidden on mobile via CSS */}
+        <div className="editor-sidebar">
+          <div className="sidebar-scroll">
+            <AdjustmentPanel showAll />
+            <span className="sidebar-section-header">Grading</span>
+            <div className="sidebar-panel-content">
+              <ColorGradingPanel showAll />
+            </div>
+            <span className="sidebar-section-header">Masks</span>
+            <div className="sidebar-panel-content">
+              <MaskPanel showAll />
+            </div>
+            <span className="sidebar-section-header">Export</span>
+            <div className="sidebar-panel-content">
+              <ExportDialog showAll />
+            </div>
+          </div>
+        </div>
       </div>
 
+      {/* Mobile bottom panel — hidden on desktop via CSS */}
       <div className="editor-bottom">
-        {/* Tab bar */}
         <div className="tab-bar">
           {TABS.map((tab) => (
             <button
@@ -106,9 +128,7 @@ export function Editor() {
           ))}
         </div>
 
-        {/* Tab content */}
         <div className="tab-content">
-          <RecentTab />
           <AdjustmentPanel />
           <ColorGradingPanel />
           <MaskPanel />

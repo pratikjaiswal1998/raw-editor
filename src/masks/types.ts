@@ -16,6 +16,7 @@ export interface Mask {
   id: string
   shape: MaskShape
   inverted: boolean
+  enabled: boolean
   adjustments: MaskAdjustments
 }
 
@@ -30,6 +31,11 @@ export interface MaskAdjustments {
   tint: number
   saturation: number
   vibrance: number
+}
+
+export interface MaskLayerData {
+  raster: Uint8Array
+  adjustments: MaskAdjustments
 }
 
 export const DEFAULT_MASK_ADJUSTMENTS: MaskAdjustments = {

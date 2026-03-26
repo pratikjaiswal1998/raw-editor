@@ -5,7 +5,8 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uOriginal;  // Original image (raw texture, needs flip+rotation)
-uniform sampler2D uAdjusted;  // Adjusted image (FBO output OR raw texture)
+uniform sampler2D uAdjusted;  // Global-only adjusted image (FBO output OR raw texture)
+uniform sampler2D uMasked;    // Global+mask adjusted image (FBO output)
 uniform sampler2D uMask;      // Mask texture (raw data, needs Y-flip)
 uniform bool uHasMask;
 uniform bool uInvertMask;
@@ -43,16 +44,16 @@ void main() {
   vec3 adjusted = texture(uAdjusted, adjUv).rgb;
 
   if (uHasMask) {
-    // uOriginal is always a raw texture → apply flip+rotation
-    vec3 original = texture(uOriginal, imageUv(vUv)).rgb;
     // Mask data has row 0 at top, texture Y=0 at bottom → flip Y
     float mask = texture(uMask, vec2(vUv.x, 1.0 - vUv.y)).r;
     if (uInvertMask) mask = 1.0 - mask;
 
-    // Convert both to gamma for blending
-    vec3 origGamma = linearToSrgb(original);
-    vec3 adjGamma = linearToSrgb(adjusted);
-    vec3 blended = mix(origGamma, adjGamma, mask);
+    // Blend between global-adjusted and (global+mask)-adjusted in linear space
+    vec3 masked = texture(uMasked, vUv).rgb;
+    vec3 blended = mix(adjusted, masked, mask);
+
+    // Convert to sRGB for display
+    vec3 output_color = linearToSrgb(blended);
 
     // Simple sharpening (unsharp mask)
     if (uSharpness > 0.0) {
@@ -64,11 +65,10 @@ void main() {
       blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, -texelSize.y)).rgb);
       blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, texelSize.y)).rgb);
       blur *= 0.25;
-      vec3 sharpened = blended + (blended - blur) * sharp;
-      blended = clamp(sharpened, 0.0, 1.0);
+      output_color = clamp(output_color + (output_color - blur) * sharp, 0.0, 1.0);
     }
 
-    fragColor = vec4(blended, 1.0);
+    fragColor = vec4(output_color, 1.0);
   } else {
     // No mask - just output adjusted with gamma
     vec3 output_color = linearToSrgb(adjusted);

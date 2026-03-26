@@ -13,7 +13,7 @@ export function Histogram() {
     const timer = setTimeout(() => {
       const p = getPipeline()
       if (p) setData(p.readHistogramData())
-    }, 100)
+    }, 300)
     return () => clearTimeout(timer)
   }, [show, adjustments])
 
@@ -27,12 +27,12 @@ export function Histogram() {
     const h = canvas.height
     ctx.clearRect(0, 0, w, h)
 
-    const maxVal = Math.max(
-      ...Array.from(data.r).slice(1, 254),
-      ...Array.from(data.g).slice(1, 254),
-      ...Array.from(data.b).slice(1, 254),
-      1,
-    )
+    let maxVal = 1
+    for (let i = 1; i < 254; i++) {
+      if (data.r[i] > maxVal) maxVal = data.r[i]
+      if (data.g[i] > maxVal) maxVal = data.g[i]
+      if (data.b[i] > maxVal) maxVal = data.b[i]
+    }
 
     const drawChannel = (channel: Uint32Array, color: string) => {
       ctx.beginPath()
