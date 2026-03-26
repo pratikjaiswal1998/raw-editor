@@ -1,73 +1,49 @@
-# React + TypeScript + Vite
+# RAW Editor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A browser-based RAW photo editor inspired by Adobe Lightroom Classic, built with React, TypeScript, and WebGL 2.
 
-Currently, two official plugins are available:
+**[Open App](https://pratikjaiswal1998.github.io/raw-editor/)**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Features
 
-## React Compiler
+- Open DNG, JPEG, PNG, TIFF, and HEIC files
+- Non-destructive editing with full undo/redo history
+- WebGL 2 GPU-accelerated processing pipeline
+- Works offline as a PWA — installable on mobile and desktop
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Adjustments
 
-## Expanding the ESLint configuration
+- Exposure, Contrast, Highlights, Shadows, Whites, Blacks
+- White Balance (Temperature & Tint)
+- Vibrance & Saturation
+- HSL (Hue, Saturation, Luminance) per 8 color channels
+- Color Grading with shadow/midtone/highlight color wheels
+- Sharpening
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Masks
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- Rectangle, Ellipse, Linear Gradient, Radial Gradient shapes
+- Per-mask local adjustments (exposure, contrast, color, etc.)
+- Mask inversion, feathering, rotation
+- Interactive drag handles for positioning and resizing
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Other
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- Live histogram
+- Image rotation
+- Before/after comparison (long press)
+- JPEG export with quality control and mobile share sheet
+- Recent files with saved edit settings
+- Responsive: desktop sidebar layout + mobile tab bar
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Privacy
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Everything runs 100% in your browser. No images are uploaded anywhere. The app never stores your photos — only edit settings are saved locally.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Tech Stack
+
+- React 19 + TypeScript + Vite
+- WebGL 2 with GLSL shaders (3-pass rendering pipeline)
+- Zustand for state management
+- Web Workers for off-thread image decoding and mask rasterization
+- PWA with offline support
