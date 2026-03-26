@@ -100,7 +100,6 @@ export function Toolbar() {
   const rotateImage = useEditorStore((s) => s.rotateImage)
 
   const handleOpen = async () => {
-    setLoading(true)
     try {
       let file: File
       let handle: FileSystemFileHandle | null = null
@@ -119,6 +118,9 @@ export function Toolbar() {
         if (!f) return
         file = f
       }
+
+      // Only show loading AFTER user has selected a file
+      setLoading(true)
 
       const storeBefore = useEditorStore.getState()
       const isRestore = file.name === storeBefore.fileName && storeBefore.originalImage === null
