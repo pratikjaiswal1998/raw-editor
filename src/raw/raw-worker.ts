@@ -48,21 +48,19 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     const { buffer, fileName } = e.data
     const ext = fileName.toLowerCase().split('.').pop()
 
-    let data: Float32Array
-    let width: number
-    let height: number
+    let data: Float32Array | undefined
+    let width: number | undefined
+    let height: number | undefined
     let orientation = 1
 
     if (ext === 'dng') {
       // Try 1: Full raw DNG parsing
-      let dngParsed = false
       try {
         const result = await parseDng(buffer)
         data = result.data
         width = result.width
         height = result.height
         orientation = result.metadata.orientation
-        dngParsed = true
       } catch (dngErr) {
         console.warn('DNG raw decode failed in worker:', dngErr)
 
@@ -75,14 +73,13 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
             data = decoded.data
             width = decoded.width
             height = decoded.height
-            dngParsed = true
           }
         } catch (jpegErr) {
           console.warn('DNG embedded JPEG extraction failed in worker:', jpegErr)
         }
       }
 
-      if (!dngParsed) {
+      if (!data || width === undefined || height === undefined) {
         self.postMessage({ error: 'Could not decode DNG file. The compression format may not be supported.' } satisfies WorkerErrorResponse)
         return
       }
@@ -93,14 +90,13 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       data = decoded.data
       width = decoded.width
       height = decoded.height
-      // Regular images have no EXIF orientation from DNG metadata; default is 1
       orientation = 1
     }
 
     // Transfer the Float32Array buffer (zero-copy)
     self.postMessage(
       { data, width, height, orientation } satisfies WorkerSuccessResponse,
-      [data!.buffer],
+      { transfer: [data.buffer] },
     )
   } catch (err) {
     self.postMessage({ error: (err as Error).message } satisfies WorkerErrorResponse)

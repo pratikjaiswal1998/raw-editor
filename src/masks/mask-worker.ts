@@ -13,7 +13,7 @@ self.onmessage = (e: MessageEvent) => {
   if (masks.length === 0) {
     // No masks = full white (everything affected by global adjustments)
     const result = new Uint8Array(width * height).fill(255)
-    self.postMessage(result, [result.buffer])
+    self.postMessage(result, { transfer: [result.buffer] })
     return
   }
 
@@ -38,5 +38,5 @@ self.onmessage = (e: MessageEvent) => {
     }
   }
 
-  self.postMessage(combined, [combined.buffer])
+  self.postMessage(combined, { transfer: [combined.buffer] })
 }
