@@ -1,5 +1,5 @@
 // Web Worker for RAW image processing — runs off the main thread
-import { parseDng, extractEmbeddedJpeg, srgbToLinear } from './dng-parser'
+import { parseDng, extractEmbeddedJpeg, SRGB_TO_LINEAR_LUT } from './dng-parser'
 
 export interface WorkerRequest {
   buffer: ArrayBuffer
@@ -23,24 +23,39 @@ export type WorkerResponse = WorkerSuccessResponse | WorkerErrorResponse
  * Decode a JPEG/PNG blob using OffscreenCanvas (no DOM needed).
  * Returns RGBA Float32Array in linear light.
  */
+// Max pixels to keep load times reasonable on mobile (~8MP)
+const MAX_PIXELS = 8_000_000
+
 async function decodeImageBlob(blob: Blob): Promise<{ data: Float32Array; width: number; height: number }> {
   const bitmap = await createImageBitmap(blob)
-  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+  let w = bitmap.width
+  let h = bitmap.height
+
+  // Downsample if too large (common for phone photos: 12-48MP)
+  const totalPixels = w * h
+  if (totalPixels > MAX_PIXELS) {
+    const scale = Math.sqrt(MAX_PIXELS / totalPixels)
+    w = Math.round(w * scale)
+    h = Math.round(h * scale)
+  }
+
+  const canvas = new OffscreenCanvas(w, h)
   const ctx = canvas.getContext('2d')!
-  ctx.drawImage(bitmap, 0, 0)
+  ctx.drawImage(bitmap, 0, 0, w, h)
   bitmap.close()
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const imgData = ctx.getImageData(0, 0, w, h)
   const pixels = imgData.data
 
-  const floats = new Float32Array(canvas.width * canvas.height * 4)
+  const lut = SRGB_TO_LINEAR_LUT
+  const floats = new Float32Array(w * h * 4)
   for (let i = 0; i < pixels.length; i += 4) {
-    floats[i] = srgbToLinear(pixels[i] / 255)
-    floats[i + 1] = srgbToLinear(pixels[i + 1] / 255)
-    floats[i + 2] = srgbToLinear(pixels[i + 2] / 255)
+    floats[i] = lut[pixels[i]]
+    floats[i + 1] = lut[pixels[i + 1]]
+    floats[i + 2] = lut[pixels[i + 2]]
     floats[i + 3] = 1.0
   }
 
-  return { data: floats, width: canvas.width, height: canvas.height }
+  return { data: floats, width: w, height: h }
 }
 
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
