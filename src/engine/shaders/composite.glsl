@@ -7,8 +7,8 @@ out vec4 fragColor;
 uniform sampler2D uOriginal;  // Original image (raw texture, needs flip+rotation)
 uniform sampler2D uAdjusted;  // Global-only adjusted image (FBO output OR raw texture)
 uniform sampler2D uMask;      // Mask texture (raw data, needs Y-flip)
-uniform bool uHasMask;
-uniform bool uInvertMask;
+uniform int uHasMask;         // 1 = mask active, 0 = no mask
+uniform int uInvertMask;
 uniform float uSharpness;     // 0 to 100
 
 // Mask adjustment uniforms (applied on top of global adjustments)
@@ -25,8 +25,8 @@ uniform float uMaskVibrance;
 
 // Rotation (0, 1, 2, 3 = 0°, 90°, 180°, 270° CW)
 uniform int uRotation;
-// When true, uAdjusted is a raw texture (renderOriginal) and needs flip+rotation
-uniform bool uDirectSample;
+// When 1, uAdjusted is a raw texture (renderOriginal) and needs flip+rotation
+uniform int uDirectSample;
 
 vec2 rotateUv(vec2 uv, int rot) {
   if (rot == 1) return vec2(uv.y, 1.0 - uv.x);       // 90° CW
@@ -50,8 +50,8 @@ vec3 linearToSrgb(vec3 c) {
 
 // Apply mask adjustments to a linear-space color
 vec3 applyMaskAdjustments(vec3 color) {
-  // Exposure (linear space)
-  color *= pow(2.0, uMaskExposure);
+  // Exposure (linear space) — use exp2 for better GPU compatibility
+  color *= exp2(uMaskExposure);
 
   // White balance (linear space)
   float mTemp = uMaskTemperature / 100.0;
@@ -64,7 +64,7 @@ vec3 applyMaskAdjustments(vec3 color) {
   color = max(color, vec3(0.0));
 
   // Convert to perceptual space for tone adjustments
-  vec3 gamma = pow(color, vec3(1.0/2.2));
+  vec3 gamma = pow(max(color, vec3(0.0)), vec3(1.0/2.2));
   float lum = dot(gamma, vec3(0.2126, 0.7152, 0.0722));
 
   // Whites / Blacks / Highlights / Shadows
@@ -85,7 +85,7 @@ vec3 applyMaskAdjustments(vec3 color) {
   float curSat = (maxCh - minCh) / max(maxCh, 0.001);
   float vibAmt = vib * (1.0 - curSat);
   vec3 vibGray = vec3(lum);
-  gamma = mix(gamma, mix(vibGray, gamma, 1.0 + vibAmt), 1.0);
+  gamma = mix(vibGray, gamma, 1.0 + vibAmt);
 
   // Saturation
   float sat = 1.0 + uMaskSaturation / 100.0;
@@ -100,52 +100,36 @@ vec3 applyMaskAdjustments(vec3 color) {
 void main() {
   // If uDirectSample, uAdjusted is a raw texture → apply flip+rotation
   // Otherwise, uAdjusted is the FBO output → already correctly oriented
-  vec2 adjUv = uDirectSample ? imageUv(vUv) : vUv;
+  vec2 adjUv = (uDirectSample > 0) ? imageUv(vUv) : vUv;
   vec3 adjusted = texture(uAdjusted, adjUv).rgb;
 
-  if (uHasMask) {
-    // Mask data has row 0 at top, texture Y=0 at bottom → flip Y
-    float mask = texture(uMask, vec2(vUv.x, 1.0 - vUv.y)).r;
-    if (uInvertMask) mask = 1.0 - mask;
+  // Branchless mask processing — avoids GLSL optimizer issues on some GPUs
+  // Mask data has row 0 at top, texture Y=0 at bottom → flip Y
+  float rawMask = texture(uMask, vec2(vUv.x, 1.0 - vUv.y)).r;
+  float mask = mix(rawMask, 1.0 - rawMask, float(uInvertMask));
 
-    // Apply mask adjustments on top of global-adjusted result, blend by mask
-    vec3 maskResult = applyMaskAdjustments(adjusted);
-    vec3 blended = mix(adjusted, maskResult, mask);
+  // maskStrength = 0 when no masks, = mask when masks active
+  float maskStrength = float(uHasMask) * mask;
 
-    // Convert to sRGB for display
-    vec3 output_color = linearToSrgb(blended);
+  // Apply mask adjustments and blend (when maskStrength=0, result = adjusted)
+  vec3 maskResult = applyMaskAdjustments(adjusted);
+  vec3 blended = mix(adjusted, maskResult, maskStrength);
 
-    // Simple sharpening (unsharp mask)
-    if (uSharpness > 0.0) {
-      vec2 texelSize = 1.0 / vec2(textureSize(uAdjusted, 0));
-      float sharp = uSharpness / 100.0 * 1.5;
-      vec3 blur = vec3(0.0);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(-texelSize.x, 0.0)).rgb);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(texelSize.x, 0.0)).rgb);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, -texelSize.y)).rgb);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, texelSize.y)).rgb);
-      blur *= 0.25;
-      output_color = clamp(output_color + (output_color - blur) * sharp, 0.0, 1.0);
-    }
+  // Convert to sRGB for display
+  vec3 output_color = linearToSrgb(blended);
 
-    fragColor = vec4(output_color, 1.0);
-  } else {
-    // No mask - just output adjusted with gamma
-    vec3 output_color = linearToSrgb(adjusted);
-
-    // Sharpening
-    if (uSharpness > 0.0) {
-      vec2 texelSize = 1.0 / vec2(textureSize(uAdjusted, 0));
-      float sharp = uSharpness / 100.0 * 1.5;
-      vec3 blur = vec3(0.0);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(-texelSize.x, 0.0)).rgb);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(texelSize.x, 0.0)).rgb);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, -texelSize.y)).rgb);
-      blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, texelSize.y)).rgb);
-      blur *= 0.25;
-      output_color = clamp(output_color + (output_color - blur) * sharp, 0.0, 1.0);
-    }
-
-    fragColor = vec4(output_color, 1.0);
+  // Simple sharpening (unsharp mask)
+  if (uSharpness > 0.0) {
+    vec2 texelSize = 1.0 / vec2(textureSize(uAdjusted, 0));
+    float sharp = uSharpness / 100.0 * 1.5;
+    vec3 blur = vec3(0.0);
+    blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(-texelSize.x, 0.0)).rgb);
+    blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(texelSize.x, 0.0)).rgb);
+    blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, -texelSize.y)).rgb);
+    blur += linearToSrgb(texture(uAdjusted, adjUv + vec2(0.0, texelSize.y)).rgb);
+    blur *= 0.25;
+    output_color = clamp(output_color + (output_color - blur) * sharp, 0.0, 1.0);
   }
+
+  fragColor = vec4(output_color, 1.0);
 }

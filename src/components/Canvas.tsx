@@ -111,6 +111,7 @@ export function Canvas() {
     const hasMasks = enabledMasks.length > 0
 
     // Compute combined mask adjustments (average of all enabled masks)
+    // Always pass adjustments when masks exist — the shader handles zero values as no-ops
     let maskAdjustments: MaskAdjustments | null = null
     if (hasMasks) {
       const combined: MaskAdjustments = {
@@ -126,9 +127,7 @@ export function Canvas() {
       for (const k of Object.keys(combined) as (keyof MaskAdjustments)[]) {
         combined[k] /= enabledMasks.length
       }
-      // Only pass mask adjustments if any are non-zero
-      const hasAdjustments = Object.values(combined).some((v) => v !== 0)
-      maskAdjustments = hasAdjustments ? combined : null
+      maskAdjustments = combined
     }
 
     pipeline.render(adjustments, hasMasks, canvasW, canvasH, showBeforeAfter, rotation, maskAdjustments)

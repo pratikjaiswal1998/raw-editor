@@ -153,8 +153,7 @@ export class RenderPipeline {
     gl.bindTexture(gl.TEXTURE_2D, this.maskTexture)
     gl.uniform1i(this.compositeUniforms.get('uMask')!, 2)
 
-    const hasMaskAdj = hasMasks && maskAdjustments !== null
-    gl.uniform1i(this.compositeUniforms.get('uHasMask')!, hasMaskAdj ? 1 : 0)
+    gl.uniform1i(this.compositeUniforms.get('uHasMask')!, hasMasks ? 1 : 0)
     gl.uniform1i(this.compositeUniforms.get('uInvertMask')!, 0)
     gl.uniform1f(this.compositeUniforms.get('uSharpness')!, adjustments.sharpness)
     gl.uniform1i(this.compositeUniforms.get('uRotation')!, rotationSteps)
@@ -243,8 +242,7 @@ export class RenderPipeline {
     gl.activeTexture(gl.TEXTURE2)
     gl.bindTexture(gl.TEXTURE_2D, maskTex)
     gl.uniform1i(gl.getUniformLocation(compProg, 'uMask'), 2)
-    const hasMaskAdj = hasMasks && maskAdjustments !== null
-    gl.uniform1i(gl.getUniformLocation(compProg, 'uHasMask'), hasMaskAdj ? 1 : 0)
+    gl.uniform1i(gl.getUniformLocation(compProg, 'uHasMask'), hasMasks ? 1 : 0)
     gl.uniform1i(gl.getUniformLocation(compProg, 'uInvertMask'), 0)
     gl.uniform1f(gl.getUniformLocation(compProg, 'uSharpness'), adjustments.sharpness)
     gl.uniform1i(gl.getUniformLocation(compProg, 'uRotation'), rotationStepsExport)

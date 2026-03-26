@@ -48,7 +48,10 @@ export function createMaskTexture(
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
+  // R8 = 1 byte per pixel, must set alignment to 1 for non-power-of-4 widths
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, data)
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
 
   return tex
 }
@@ -61,7 +64,9 @@ export function updateMaskTexture(
   data: Uint8Array,
 ): void {
   gl.bindTexture(gl.TEXTURE_2D, texture)
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RED, gl.UNSIGNED_BYTE, data)
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
 }
 
 export interface Framebuffer {
