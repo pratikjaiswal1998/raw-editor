@@ -6,7 +6,7 @@ A browser-based RAW photo editor inspired by Adobe Lightroom Classic, built with
 
 ## Features
 
-- Open DNG, JPEG, PNG, TIFF, and HEIC files
+- Open DNG, JPEG, PNG, TIFF, HEIC, WebP, AVIF, BMP, GIF, and SVG files
 - Non-destructive editing with full undo/redo history
 - WebGL 2 GPU-accelerated processing pipeline
 - Works offline as a PWA — installable on mobile and desktop
@@ -43,7 +43,7 @@ Everything runs 100% in your browser. No images are uploaded anywhere. The app n
 ## Tech Stack
 
 - React 19 + TypeScript + Vite
-- WebGL 2 with GLSL shaders (3-pass rendering pipeline)
+- WebGL 2 with GLSL shaders (2-pass rendering pipeline)
 - Zustand for state management
 - Web Workers for off-thread image decoding and mask rasterization
 - PWA with offline support

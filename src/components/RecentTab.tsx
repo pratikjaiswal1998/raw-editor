@@ -52,7 +52,7 @@ export function RecentTab() {
 
       if (!file) {
         // Handle unavailable or permission denied — fall back to picker
-        file = await triggerFileInput('.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic')
+        file = await triggerFileInput('.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic,.heif,.webp,.avif,.bmp,.gif,.svg')
         if (!file) return
       }
 

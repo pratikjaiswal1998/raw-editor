@@ -58,7 +58,7 @@ export function RecentDropdown() {
       let file: File | null = null
       if (recent.handle) file = await getFileFromHandle(recent.handle)
       if (!file) {
-        file = await triggerFileInput('.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic')
+        file = await triggerFileInput('.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic,.heif,.webp,.avif,.bmp,.gif,.svg')
         if (!file) return
       }
       const worker = new Worker(new URL('../raw/raw-worker.ts', import.meta.url), { type: 'module' })

@@ -15,8 +15,8 @@ function exifOrientationToRotation(orientation: number): number {
   }
 }
 
-const ACCEPT_TYPES = [{ description: 'Image files', accept: { 'image/*': ['.dng', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.heic'] as `.${string}`[] } }]
-const ACCEPT_STRING = '.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic'
+const ACCEPT_TYPES = [{ description: 'Image files', accept: { 'image/*': ['.dng', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.heic', '.heif', '.webp', '.avif', '.bmp', '.gif', '.svg'] as `.${string}`[] } }]
+const ACCEPT_STRING = '.dng,.DNG,.jpg,.jpeg,.png,.tiff,.tif,.heic,.heif,.webp,.avif,.bmp,.gif,.svg'
 
 // Module-level worker instance (reused across opens)
 let rawWorker: Worker | null = null
