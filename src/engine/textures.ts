@@ -33,6 +33,24 @@ export function createEmptyTexture(
   return createFloatTexture(gl, width, height, null)
 }
 
+// Expand single-channel mask data to RGBA for maximum GPU compatibility.
+// R8 textures have known driver bugs on some mobile GPUs (Mali, Adreno)
+// where normalized reads fail for 0/255 boundary values.
+function expandMaskToRGBA(data: Uint8Array | null, size: number): Uint8Array {
+  const rgba = new Uint8Array(size * 4)
+  if (data) {
+    for (let i = 0; i < size; i++) {
+      const v = data[i]
+      const j = i * 4
+      rgba[j] = v
+      rgba[j + 1] = v
+      rgba[j + 2] = v
+      rgba[j + 3] = 255
+    }
+  }
+  return rgba
+}
+
 export function createMaskTexture(
   gl: WebGL2RenderingContext,
   width: number,
@@ -48,10 +66,9 @@ export function createMaskTexture(
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
-  // R8 = 1 byte per pixel, must set alignment to 1 for non-power-of-4 widths
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, data)
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
+  // Use RGBA8 instead of R8 for universal GPU compatibility
+  const rgba = expandMaskToRGBA(data, width * height)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba)
 
   return tex
 }
@@ -64,9 +81,9 @@ export function updateMaskTexture(
   data: Uint8Array,
 ): void {
   gl.bindTexture(gl.TEXTURE_2D, texture)
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
-  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RED, gl.UNSIGNED_BYTE, data)
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
+  // Use full texImage2D (not texSubImage2D) for better mobile GPU compatibility
+  const rgba = expandMaskToRGBA(data, width * height)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba)
 }
 
 export interface Framebuffer {

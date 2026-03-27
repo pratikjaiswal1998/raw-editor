@@ -60,7 +60,9 @@ export function Canvas() {
     // Send all enabled masks to worker for combined rasterization
     const handler = (e: MessageEvent) => {
       if (pipeline) {
-        pipeline.updateMask(e.data as Uint8Array)
+        // Safety: some browsers return ArrayBuffer instead of Uint8Array for transferred data
+        const maskData = e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data as Uint8Array
+        pipeline.updateMask(maskData)
         // Force re-render after mask texture is updated
         cancelAnimationFrame(rafRef.current)
         rafRef.current = requestAnimationFrame(render)

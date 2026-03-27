@@ -204,14 +204,16 @@ export class RenderPipeline {
     const origTex = createFloatTexture(gl, this.imageWidth, this.imageHeight, pixels)
     const adjFbo = createFramebuffer(gl, this.imageWidth, this.imageHeight)
 
-    // Copy mask
-    const maskData = new Uint8Array(this.imageWidth * this.imageHeight)
+    // Copy mask (texture is RGBA8 — read RGBA and extract R channel)
+    const maskRGBA = new Uint8Array(this.imageWidth * this.imageHeight * 4)
     const maskFboRead = mainGl.createFramebuffer()!
     mainGl.bindFramebuffer(mainGl.FRAMEBUFFER, maskFboRead)
     mainGl.framebufferTexture2D(mainGl.FRAMEBUFFER, mainGl.COLOR_ATTACHMENT0, mainGl.TEXTURE_2D, this.maskTexture!, 0)
-    mainGl.readPixels(0, 0, this.imageWidth, this.imageHeight, mainGl.RED, mainGl.UNSIGNED_BYTE, maskData)
+    mainGl.readPixels(0, 0, this.imageWidth, this.imageHeight, mainGl.RGBA, mainGl.UNSIGNED_BYTE, maskRGBA)
     mainGl.bindFramebuffer(mainGl.FRAMEBUFFER, null)
     mainGl.deleteFramebuffer(maskFboRead)
+    const maskData = new Uint8Array(this.imageWidth * this.imageHeight)
+    for (let i = 0; i < maskData.length; i++) maskData[i] = maskRGBA[i * 4]
 
     const maskTex = createMaskTexture(gl, this.imageWidth, this.imageHeight, maskData)
     const rotationStepsExport = Math.round(rotation / 90) % 4
