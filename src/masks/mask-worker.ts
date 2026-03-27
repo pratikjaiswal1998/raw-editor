@@ -11,14 +11,13 @@ self.onmessage = (e: MessageEvent) => {
   const { masks, width, height } = e.data as CombinedMaskRequest
 
   if (masks.length === 0) {
-    // No masks = full white (everything affected by global adjustments)
-    const result = new Uint8Array(width * height).fill(255)
-    self.postMessage(result, { transfer: [result.buffer] })
+    self.postMessage({ rasters: [] })
     return
   }
 
-  // Rasterize each mask and combine with MAX blending (union)
-  const combined = new Uint8Array(width * height)
+  // Rasterize each mask individually (each gets its own composite pass)
+  const rasters: Uint8Array[] = []
+  const transfers: ArrayBuffer[] = []
 
   for (const mask of masks) {
     const rasterized = rasterizeMask(mask.shape, width, height)
@@ -30,13 +29,9 @@ self.onmessage = (e: MessageEvent) => {
       }
     }
 
-    // Max blend (union of all masks)
-    for (let i = 0; i < combined.length; i++) {
-      if (rasterized[i] > combined[i]) {
-        combined[i] = rasterized[i]
-      }
-    }
+    rasters.push(rasterized)
+    transfers.push(rasterized.buffer as ArrayBuffer)
   }
 
-  self.postMessage(combined, { transfer: [combined.buffer] })
+  self.postMessage({ rasters }, { transfer: transfers as ArrayBuffer[] })
 }

@@ -27,6 +27,8 @@ uniform float uMaskVibrance;
 uniform int uRotation;
 // When 1, uAdjusted is a raw texture (renderOriginal) and needs flip+rotation
 uniform int uDirectSample;
+// When 1, apply sRGB gamma + sharpening (final output). When 0, output linear (intermediate pass).
+uniform int uFinalPass;
 
 vec2 rotateUv(vec2 uv, int rot) {
   if (rot == 1) return vec2(uv.y, 1.0 - uv.x);       // 90° CW
@@ -115,7 +117,13 @@ void main() {
   vec3 maskResult = applyMaskAdjustments(adjusted);
   vec3 blended = mix(adjusted, maskResult, maskStrength);
 
-  // Convert to sRGB for display
+  // Intermediate pass: output linear color directly (no sRGB, no sharpening)
+  if (uFinalPass == 0) {
+    fragColor = vec4(blended, 1.0);
+    return;
+  }
+
+  // Final pass: Convert to sRGB for display
   vec3 output_color = linearToSrgb(blended);
 
   // Simple sharpening (unsharp mask)

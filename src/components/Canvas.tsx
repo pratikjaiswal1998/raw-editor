@@ -44,26 +44,28 @@ export function Canvas() {
     pipeline.uploadImage(originalImage, imageWidth, imageHeight)
   }, [originalImage, imageWidth, imageHeight])
 
-  // Update mask texture when masks change (offloaded to worker)
-  // All enabled masks are combined (union via max blend) into a single texture
+  // Update mask textures when masks change (offloaded to worker)
+  // Each enabled mask gets its own raster for independent composite passes
   useEffect(() => {
     if (!pipeline || !originalImage) return
 
     const enabledMasks = masks.filter((m) => m.enabled)
 
     if (enabledMasks.length === 0) {
-      // No enabled masks = full white (everything affected by global adjustments)
-      pipeline.updateMask(new Uint8Array(imageWidth * imageHeight).fill(255))
+      pipeline.updateMaskLayers([])
       return
     }
 
-    // Send all enabled masks to worker for combined rasterization
+    // Send all enabled masks to worker for individual rasterization
     const handler = (e: MessageEvent) => {
       if (pipeline) {
+        const data = e.data as { rasters: (Uint8Array | ArrayBuffer)[] }
         // Safety: some browsers return ArrayBuffer instead of Uint8Array for transferred data
-        const maskData = e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data as Uint8Array
-        pipeline.updateMask(maskData)
-        // Force re-render after mask texture is updated
+        const rasters = data.rasters.map((r) =>
+          r instanceof ArrayBuffer ? new Uint8Array(r) : r as Uint8Array
+        )
+        pipeline.updateMaskLayers(rasters)
+        // Force re-render after mask textures are updated
         cancelAnimationFrame(rafRef.current)
         rafRef.current = requestAnimationFrame(render)
       }
@@ -109,30 +111,11 @@ export function Canvas() {
     const canvasW = Math.round(displayW * dpr * zoom)
     const canvasH = Math.round(displayH * dpr * zoom)
 
+    // Each enabled mask gets its own composite pass with its own adjustments
     const enabledMasks = masks.filter((m) => m.enabled)
-    const hasMasks = enabledMasks.length > 0
+    const maskLayerAdjustments: MaskAdjustments[] = enabledMasks.map((m) => m.adjustments)
 
-    // Compute combined mask adjustments (average of all enabled masks)
-    // Always pass adjustments when masks exist — the shader handles zero values as no-ops
-    let maskAdjustments: MaskAdjustments | null = null
-    if (hasMasks) {
-      const combined: MaskAdjustments = {
-        exposure: 0, contrast: 0, highlights: 0, shadows: 0,
-        whites: 0, blacks: 0, temperature: 0, tint: 0,
-        saturation: 0, vibrance: 0,
-      }
-      for (const m of enabledMasks) {
-        for (const k of Object.keys(combined) as (keyof MaskAdjustments)[]) {
-          combined[k] += m.adjustments[k]
-        }
-      }
-      for (const k of Object.keys(combined) as (keyof MaskAdjustments)[]) {
-        combined[k] /= enabledMasks.length
-      }
-      maskAdjustments = combined
-    }
-
-    pipeline.render(adjustments, hasMasks, canvasW, canvasH, showBeforeAfter, rotation, maskAdjustments)
+    pipeline.render(adjustments, maskLayerAdjustments, canvasW, canvasH, showBeforeAfter, rotation)
   }, []) // Empty deps — reads from store directly
 
   // Subscribe to store changes and re-render
