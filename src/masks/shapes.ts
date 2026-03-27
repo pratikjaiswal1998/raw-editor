@@ -34,7 +34,9 @@ export function rasterizeMask(
           const distX = Math.abs(lx) - halfW
           const distY = Math.abs(ly) - halfH
           const dist = Math.max(distX, distY)
-          value = 1 - smoothstep(-feather, 0, dist)
+          // Center feather on boundary: half extends inward, half outward
+          const halfF = feather * 0.5
+          value = 1 - smoothstep(-halfF, halfF, dist)
           break
         }
 
@@ -44,7 +46,9 @@ export function rasterizeMask(
           if (rx <= 0 || ry <= 0) { value = 0; break }
           const ellipseDist = Math.sqrt((lx / rx) ** 2 + (ly / ry) ** 2) - 1
           const ellipseFeather = feather / Math.min(rx, ry)
-          value = 1 - smoothstep(-ellipseFeather, 0, ellipseDist)
+          // Center feather on boundary: half extends inward, half outward
+          const halfEF = ellipseFeather * 0.5
+          value = 1 - smoothstep(-halfEF, halfEF, ellipseDist)
           break
         }
 
