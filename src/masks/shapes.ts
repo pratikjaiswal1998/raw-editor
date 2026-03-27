@@ -15,7 +15,7 @@ export function rasterizeMask(
   const rot = (shape.rotation * Math.PI) / 180
   const cosR = Math.cos(-rot)
   const sinR = Math.sin(-rot)
-  const feather = Math.max(shape.feather * Math.max(width, height) * 0.1, 1)
+  const feather = Math.max(shape.feather * Math.max(width, height) * 0.5, 1)
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
