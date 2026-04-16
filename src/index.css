@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+/* Inter font is preconnected + loaded via <link> tags in index.html to avoid blocking first paint */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -137,4 +137,32 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* ===== COARSE POINTER (touch devices) ===== */
+/* Enlarge slider thumbs + hit area for finger precision */
+@media (pointer: coarse) {
+  input[type="range"] {
+    height: 28px; /* larger vertical hit area; track still rendered small */
+    background: transparent;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    background: var(--slider-track);
+    border-radius: var(--radius-pill);
+  }
+  input[type="range"]::-moz-range-track {
+    height: 4px;
+    background: var(--slider-track);
+    border-radius: var(--radius-pill);
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+    margin-top: -9px; /* (track 4px - thumb 22px) / 2 */
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+  }
 }

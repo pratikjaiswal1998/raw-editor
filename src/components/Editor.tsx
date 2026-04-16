@@ -46,10 +46,13 @@ export function Editor() {
     el.style.transition = 'none'
   }, [])
 
+  // Use visualViewport where available so mobile URL bar toggling doesn't warp the drag math
+  const viewportHeight = () => window.visualViewport?.height ?? window.innerHeight
+
   const onDragMove = useCallback((clientY: number) => {
     if (!dragRef.current) return
     const delta = dragRef.current.startY - clientY
-    const vh = window.innerHeight
+    const vh = viewportHeight()
     const minH = 48 // tab bar only
     const maxH = vh * 0.75
     const newH = Math.max(minH, Math.min(maxH, dragRef.current.startH + delta))
@@ -63,7 +66,7 @@ export function Editor() {
     if (!el) return
     el.style.transition = ''
     // Snap to nearest: collapsed (48), mid (38vh), expanded (65vh)
-    const vh = window.innerHeight
+    const vh = viewportHeight()
     const h = el.offsetHeight
     const collapsed = 48
     const mid = vh * 0.38
@@ -191,7 +194,7 @@ export function Editor() {
         style={bottomHeight != null ? { height: bottomHeight, maxHeight: 'none' } : undefined}
       >
         <div className="drag-handle" onDoubleClick={() => {
-          const vh = window.innerHeight
+          const vh = window.visualViewport?.height ?? window.innerHeight
           const current = bottomRef.current?.offsetHeight ?? 0
           setBottomHeight(current < vh * 0.5 ? vh * 0.65 : vh * 0.38)
         }}>
