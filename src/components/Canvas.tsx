@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback } from 'react'
 import { RenderPipeline } from '../engine/pipeline'
 import { useEditorStore } from '../state/editor-store'
 import { MaskOverlay } from './MaskOverlay'
-import type { MaskAdjustments } from '../masks/types'
+import type { MaskAdjustments, MaskShape } from '../masks/types'
 
 let pipeline: RenderPipeline | null = null
 
@@ -13,10 +13,24 @@ export function getPipeline(): RenderPipeline | null {
 // Module-level mask worker
 const maskWorker = new Worker(new URL('../masks/mask-worker.ts', import.meta.url), { type: 'module' })
 
+interface MaskPayload {
+  masks: { shape: MaskShape; inverted: boolean }[]
+  width: number
+  height: number
+}
+
 export function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef<number>(0)
+
+  // Coalesce mask-worker calls: at most one message in-flight at any time.
+  // While the worker is busy, incoming shape updates overwrite `pending`
+  // so the worker always processes the *latest* shape on its next cycle
+  // instead of serving a stale backlog. This is what makes mask drags
+  // feel snappy on large (8MP+) images.
+  const workerBusyRef = useRef(false)
+  const pendingPayloadRef = useRef<MaskPayload | null>(null)
 
   const originalImage = useEditorStore((s) => s.originalImage)
   const fileName = useEditorStore((s) => s.fileName)
@@ -44,41 +58,64 @@ export function Canvas() {
     pipeline.uploadImage(originalImage, imageWidth, imageHeight)
   }, [originalImage, imageWidth, imageHeight])
 
-  // Update mask textures when masks change (offloaded to worker)
-  // Each enabled mask gets its own raster for independent composite passes
+  // Helper: send a payload to the worker, coalescing if one is already in flight
+  const postMaskPayload = useCallback((payload: MaskPayload) => {
+    if (workerBusyRef.current) {
+      // Overwrite any pending payload — we only ever care about the latest shape
+      pendingPayloadRef.current = payload
+      return
+    }
+    workerBusyRef.current = true
+    maskWorker.postMessage(payload)
+  }, [])
+
+  // Register the worker response handler exactly once; it drains the
+  // pending payload ref if any updates came in while it was busy.
+  useEffect(() => {
+    maskWorker.onmessage = (e: MessageEvent) => {
+      if (pipeline) {
+        const data = e.data as { rasters: (Uint8Array | ArrayBuffer)[] }
+        const rasters = data.rasters.map((r) =>
+          r instanceof ArrayBuffer ? new Uint8Array(r) : (r as Uint8Array),
+        )
+        pipeline.updateMaskLayers(rasters)
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = requestAnimationFrame(render)
+      }
+
+      // Drain pending: if drags happened while we were rasterizing, send the
+      // most recent one now. Otherwise clear the busy flag.
+      if (pendingPayloadRef.current) {
+        const next = pendingPayloadRef.current
+        pendingPayloadRef.current = null
+        // workerBusyRef stays true — we're immediately posting again
+        maskWorker.postMessage(next)
+      } else {
+        workerBusyRef.current = false
+      }
+    }
+    return () => { maskWorker.onmessage = null }
+  }, [])
+
+  // Trigger mask rasterization when masks change — via the coalescing queue
   useEffect(() => {
     if (!pipeline || !originalImage) return
 
     const enabledMasks = masks.filter((m) => m.enabled)
 
     if (enabledMasks.length === 0) {
+      // Clear any in-flight/pending work, then immediately drop mask layers
+      pendingPayloadRef.current = null
       pipeline.updateMaskLayers([])
       return
     }
 
-    // Send all enabled masks to worker for individual rasterization
-    const handler = (e: MessageEvent) => {
-      if (pipeline) {
-        const data = e.data as { rasters: (Uint8Array | ArrayBuffer)[] }
-        // Safety: some browsers return ArrayBuffer instead of Uint8Array for transferred data
-        const rasters = data.rasters.map((r) =>
-          r instanceof ArrayBuffer ? new Uint8Array(r) : r as Uint8Array
-        )
-        pipeline.updateMaskLayers(rasters)
-        // Force re-render after mask textures are updated
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = requestAnimationFrame(render)
-      }
-    }
-    maskWorker.onmessage = handler
-    maskWorker.postMessage({
+    postMaskPayload({
       masks: enabledMasks.map((m) => ({ shape: m.shape, inverted: m.inverted })),
       width: imageWidth,
       height: imageHeight,
     })
-
-    return () => { maskWorker.onmessage = null }
-  }, [masks, imageWidth, imageHeight, originalImage])
+  }, [masks, imageWidth, imageHeight, originalImage, postMaskPayload])
 
   // Render loop — reads from store directly to avoid closure dependencies
   const render = useCallback(() => {
