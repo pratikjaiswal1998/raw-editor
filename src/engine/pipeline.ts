@@ -2,8 +2,28 @@ import { createProgram, VERTEX_SHADER } from './shader-compiler'
 import { createFloatTexture, createMaskTexture, createFramebuffer, updateMaskTexture, type Framebuffer } from './textures'
 import type { GlobalAdjustments } from '../state/types'
 import type { MaskAdjustments } from '../masks/types'
+import layerAdjustmentsShader from './shaders/layer-adjustments.glsl?raw'
 import adjustShader from './shaders/adjust.glsl?raw'
 import compositeShader from './shaders/composite.glsl?raw'
+
+// Poor-man's #include: both shaders declare a marker comment that we swap
+// for the shared applyLayerAdjustments() implementation at module load.
+const INCLUDE_MARKER = '//INCLUDE:layer-adjustments'
+const injectLayerAdjustments = (src: string): string => src.replace(INCLUDE_MARKER, layerAdjustmentsShader)
+
+const ADJUST_SHADER_SRC = injectLayerAdjustments(adjustShader)
+const COMPOSITE_SHADER_SRC = injectLayerAdjustments(compositeShader)
+
+// Uniform names for the shared adjustment stack — identical in both shaders.
+const LAYER_UNIFORM_NAMES: string[] = [
+  'uExposure', 'uContrast', 'uHighlights', 'uShadows',
+  'uWhites', 'uBlacks', 'uTemperature', 'uTint', 'uVibrance', 'uSaturation',
+  ...Array.from({ length: 8 }, (_, i) => `uHslHue[${i}]`),
+  ...Array.from({ length: 8 }, (_, i) => `uHslSat[${i}]`),
+  ...Array.from({ length: 8 }, (_, i) => `uHslLum[${i}]`),
+  'uShadowsHue', 'uShadowsSat', 'uMidtonesHue', 'uMidtonesSat',
+  'uHighlightsHue', 'uHighlightsSat',
+]
 
 export class RenderPipeline {
   private gl: WebGL2RenderingContext
@@ -33,31 +53,21 @@ export class RenderPipeline {
     if (!gl) throw new Error('WebGL 2 not supported')
     this.gl = gl
 
-    // Required extension for float textures
+    // Required extensions for float textures
     gl.getExtension('EXT_color_buffer_float')
     gl.getExtension('OES_texture_float_linear')
 
-    this.adjustProgram = createProgram(gl, VERTEX_SHADER, adjustShader)
-    this.compositeProgram = createProgram(gl, VERTEX_SHADER, compositeShader)
+    this.adjustProgram = createProgram(gl, VERTEX_SHADER, ADJUST_SHADER_SRC)
+    this.compositeProgram = createProgram(gl, VERTEX_SHADER, COMPOSITE_SHADER_SRC)
 
-    // Cache uniform locations to avoid per-frame lookups
-    const adjustUniformNames = [
-      'uImage', 'uExposure', 'uContrast', 'uHighlights', 'uShadows',
-      'uWhites', 'uBlacks', 'uTemperature', 'uTint', 'uVibrance', 'uSaturation',
-      ...Array.from({ length: 8 }, (_, i) => `uHslHue[${i}]`),
-      ...Array.from({ length: 8 }, (_, i) => `uHslSat[${i}]`),
-      ...Array.from({ length: 8 }, (_, i) => `uHslLum[${i}]`),
-      'uShadowsHue', 'uShadowsSat', 'uMidtonesHue', 'uMidtonesSat',
-      'uHighlightsHue', 'uHighlightsSat', 'uRotation',
-    ]
+    // Cache uniform locations to avoid per-frame lookups.
+    const adjustUniformNames = ['uImage', 'uRotation', ...LAYER_UNIFORM_NAMES]
     this.cacheUniforms(this.adjustProgram, this.adjustUniforms, adjustUniformNames)
 
     const compositeUniformNames = [
       'uOriginal', 'uAdjusted', 'uMask', 'uHasMask', 'uInvertMask',
       'uSharpness', 'uRotation', 'uDirectSample', 'uFinalPass',
-      'uMaskExposure', 'uMaskContrast', 'uMaskHighlights', 'uMaskShadows',
-      'uMaskWhites', 'uMaskBlacks', 'uMaskTemperature', 'uMaskTint',
-      'uMaskSaturation', 'uMaskVibrance',
+      ...LAYER_UNIFORM_NAMES,
     ]
     this.cacheUniforms(this.compositeProgram, this.compositeUniforms, compositeUniformNames)
 
@@ -151,7 +161,7 @@ export class RenderPipeline {
     gl.bindTexture(gl.TEXTURE_2D, this.originalTexture)
     gl.uniform1i(this.adjustUniforms.get('uImage')!, 0)
 
-    this.setAdjustmentUniforms(adjustments)
+    this.setLayerUniforms(this.adjustUniforms, adjustments)
     gl.uniform1i(this.adjustUniforms.get('uRotation')!, rotationSteps)
 
     gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -238,7 +248,7 @@ export class RenderPipeline {
     gl.uniform1i(this.compositeUniforms.get('uDirectSample')!, 0)
     gl.uniform1i(this.compositeUniforms.get('uFinalPass')!, finalPass)
 
-    this.setMaskUniforms(maskAdj)
+    this.setLayerUniforms(this.compositeUniforms, maskAdj)
 
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
@@ -263,9 +273,9 @@ export class RenderPipeline {
     gl.getExtension('EXT_color_buffer_float')
     gl.getExtension('OES_texture_float_linear')
 
-    // Recreate programs in new context
-    const adjProg = createProgram(gl, VERTEX_SHADER, adjustShader)
-    const compProg = createProgram(gl, VERTEX_SHADER, compositeShader)
+    // Recreate programs in new context (uses the same injected shader sources)
+    const adjProg = createProgram(gl, VERTEX_SHADER, ADJUST_SHADER_SRC)
+    const compProg = createProgram(gl, VERTEX_SHADER, COMPOSITE_SHADER_SRC)
     const vao = gl.createVertexArray()!
 
     // Read back original data from main context
@@ -290,7 +300,7 @@ export class RenderPipeline {
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, origTex)
     gl.uniform1i(gl.getUniformLocation(adjProg, 'uImage'), 0)
-    this.setAdjustmentUniformsOnProgram(gl, adjProg, adjustments)
+    this.setLayerUniformsOnProgram(gl, adjProg, adjustments)
     gl.uniform1i(gl.getUniformLocation(adjProg, 'uRotation'), rotationStepsExport)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 
@@ -385,7 +395,7 @@ export class RenderPipeline {
     gl.uniform1i(gl.getUniformLocation(program, 'uDirectSample'), 0)
     gl.uniform1i(gl.getUniformLocation(program, 'uFinalPass'), finalPass)
 
-    this.setMaskUniformsOnProgram(gl, program, maskAdj)
+    this.setLayerUniformsOnProgram(gl, program, maskAdj)
   }
 
   // Render just the original with sRGB gamma (for before/after)
@@ -415,7 +425,7 @@ export class RenderPipeline {
     gl.uniform1i(this.compositeUniforms.get('uRotation')!, rotationSteps)
     gl.uniform1i(this.compositeUniforms.get('uDirectSample')!, 1)
     gl.uniform1i(this.compositeUniforms.get('uFinalPass')!, 1)
-    this.setMaskUniforms(null)
+    this.setLayerUniforms(this.compositeUniforms, null)
 
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
@@ -442,86 +452,61 @@ export class RenderPipeline {
     return { r, g, b }
   }
 
-  private setAdjustmentUniforms(adj: GlobalAdjustments): void {
+  // Shared layer-uniform setter — drives both adjust and composite programs.
+  // `adj === null` zeroes everything (for no-mask compositing and renderOriginal).
+  private setLayerUniforms(cache: Map<string, WebGLUniformLocation | null>, adj: GlobalAdjustments | null): void {
     const gl = this.gl
-    gl.uniform1f(this.adjustUniforms.get('uExposure')!, adj.exposure)
-    gl.uniform1f(this.adjustUniforms.get('uContrast')!, adj.contrast)
-    gl.uniform1f(this.adjustUniforms.get('uHighlights')!, adj.highlights)
-    gl.uniform1f(this.adjustUniforms.get('uShadows')!, adj.shadows)
-    gl.uniform1f(this.adjustUniforms.get('uWhites')!, adj.whites)
-    gl.uniform1f(this.adjustUniforms.get('uBlacks')!, adj.blacks)
-    gl.uniform1f(this.adjustUniforms.get('uTemperature')!, adj.temperature)
-    gl.uniform1f(this.adjustUniforms.get('uTint')!, adj.tint)
-    gl.uniform1f(this.adjustUniforms.get('uVibrance')!, adj.vibrance)
-    gl.uniform1f(this.adjustUniforms.get('uSaturation')!, adj.saturation)
+    gl.uniform1f(cache.get('uExposure')!, adj?.exposure ?? 0)
+    gl.uniform1f(cache.get('uContrast')!, adj?.contrast ?? 0)
+    gl.uniform1f(cache.get('uHighlights')!, adj?.highlights ?? 0)
+    gl.uniform1f(cache.get('uShadows')!, adj?.shadows ?? 0)
+    gl.uniform1f(cache.get('uWhites')!, adj?.whites ?? 0)
+    gl.uniform1f(cache.get('uBlacks')!, adj?.blacks ?? 0)
+    gl.uniform1f(cache.get('uTemperature')!, adj?.temperature ?? 0)
+    gl.uniform1f(cache.get('uTint')!, adj?.tint ?? 0)
+    gl.uniform1f(cache.get('uVibrance')!, adj?.vibrance ?? 0)
+    gl.uniform1f(cache.get('uSaturation')!, adj?.saturation ?? 0)
 
     for (let i = 0; i < 8; i++) {
-      gl.uniform1f(this.adjustUniforms.get(`uHslHue[${i}]`)!, adj.hslHue[i])
-      gl.uniform1f(this.adjustUniforms.get(`uHslSat[${i}]`)!, adj.hslSaturation[i])
-      gl.uniform1f(this.adjustUniforms.get(`uHslLum[${i}]`)!, adj.hslLuminance[i])
+      gl.uniform1f(cache.get(`uHslHue[${i}]`)!, adj?.hslHue?.[i] ?? 0)
+      gl.uniform1f(cache.get(`uHslSat[${i}]`)!, adj?.hslSaturation?.[i] ?? 0)
+      gl.uniform1f(cache.get(`uHslLum[${i}]`)!, adj?.hslLuminance?.[i] ?? 0)
     }
 
-    // Color grading
-    gl.uniform1f(this.adjustUniforms.get('uShadowsHue')!, adj.shadowsHue)
-    gl.uniform1f(this.adjustUniforms.get('uShadowsSat')!, adj.shadowsSat)
-    gl.uniform1f(this.adjustUniforms.get('uMidtonesHue')!, adj.midtonesHue)
-    gl.uniform1f(this.adjustUniforms.get('uMidtonesSat')!, adj.midtonesSat)
-    gl.uniform1f(this.adjustUniforms.get('uHighlightsHue')!, adj.highlightsHue)
-    gl.uniform1f(this.adjustUniforms.get('uHighlightsSat')!, adj.highlightsSat)
+    gl.uniform1f(cache.get('uShadowsHue')!, adj?.shadowsHue ?? 0)
+    gl.uniform1f(cache.get('uShadowsSat')!, adj?.shadowsSat ?? 0)
+    gl.uniform1f(cache.get('uMidtonesHue')!, adj?.midtonesHue ?? 0)
+    gl.uniform1f(cache.get('uMidtonesSat')!, adj?.midtonesSat ?? 0)
+    gl.uniform1f(cache.get('uHighlightsHue')!, adj?.highlightsHue ?? 0)
+    gl.uniform1f(cache.get('uHighlightsSat')!, adj?.highlightsSat ?? 0)
   }
 
-  private setAdjustmentUniformsOnProgram(gl: WebGL2RenderingContext, program: WebGLProgram, adj: GlobalAdjustments): void {
-    gl.uniform1f(gl.getUniformLocation(program, 'uExposure'), adj.exposure)
-    gl.uniform1f(gl.getUniformLocation(program, 'uContrast'), adj.contrast)
-    gl.uniform1f(gl.getUniformLocation(program, 'uHighlights'), adj.highlights)
-    gl.uniform1f(gl.getUniformLocation(program, 'uShadows'), adj.shadows)
-    gl.uniform1f(gl.getUniformLocation(program, 'uWhites'), adj.whites)
-    gl.uniform1f(gl.getUniformLocation(program, 'uBlacks'), adj.blacks)
-    gl.uniform1f(gl.getUniformLocation(program, 'uTemperature'), adj.temperature)
-    gl.uniform1f(gl.getUniformLocation(program, 'uTint'), adj.tint)
-    gl.uniform1f(gl.getUniformLocation(program, 'uVibrance'), adj.vibrance)
-    gl.uniform1f(gl.getUniformLocation(program, 'uSaturation'), adj.saturation)
+  // Uniform setter for the export context (no uniform cache available —
+  // programs are created fresh on a one-shot GL context).
+  private setLayerUniformsOnProgram(gl: WebGL2RenderingContext, program: WebGLProgram, adj: GlobalAdjustments | null): void {
+    gl.uniform1f(gl.getUniformLocation(program, 'uExposure'), adj?.exposure ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uContrast'), adj?.contrast ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uHighlights'), adj?.highlights ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uShadows'), adj?.shadows ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uWhites'), adj?.whites ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uBlacks'), adj?.blacks ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uTemperature'), adj?.temperature ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uTint'), adj?.tint ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uVibrance'), adj?.vibrance ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uSaturation'), adj?.saturation ?? 0)
 
     for (let i = 0; i < 8; i++) {
-      gl.uniform1f(gl.getUniformLocation(program, `uHslHue[${i}]`), adj.hslHue[i])
-      gl.uniform1f(gl.getUniformLocation(program, `uHslSat[${i}]`), adj.hslSaturation[i])
-      gl.uniform1f(gl.getUniformLocation(program, `uHslLum[${i}]`), adj.hslLuminance[i])
+      gl.uniform1f(gl.getUniformLocation(program, `uHslHue[${i}]`), adj?.hslHue?.[i] ?? 0)
+      gl.uniform1f(gl.getUniformLocation(program, `uHslSat[${i}]`), adj?.hslSaturation?.[i] ?? 0)
+      gl.uniform1f(gl.getUniformLocation(program, `uHslLum[${i}]`), adj?.hslLuminance?.[i] ?? 0)
     }
 
-    // Color grading
-    gl.uniform1f(gl.getUniformLocation(program, 'uShadowsHue'), adj.shadowsHue)
-    gl.uniform1f(gl.getUniformLocation(program, 'uShadowsSat'), adj.shadowsSat)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMidtonesHue'), adj.midtonesHue)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMidtonesSat'), adj.midtonesSat)
-    gl.uniform1f(gl.getUniformLocation(program, 'uHighlightsHue'), adj.highlightsHue)
-    gl.uniform1f(gl.getUniformLocation(program, 'uHighlightsSat'), adj.highlightsSat)
-  }
-
-  private setMaskUniforms(mask: MaskAdjustments | null): void {
-    const gl = this.gl
-    gl.uniform1f(this.compositeUniforms.get('uMaskExposure')!, mask?.exposure ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskContrast')!, mask?.contrast ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskHighlights')!, mask?.highlights ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskShadows')!, mask?.shadows ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskWhites')!, mask?.whites ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskBlacks')!, mask?.blacks ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskTemperature')!, mask?.temperature ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskTint')!, mask?.tint ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskSaturation')!, mask?.saturation ?? 0)
-    gl.uniform1f(this.compositeUniforms.get('uMaskVibrance')!, mask?.vibrance ?? 0)
-  }
-
-  private setMaskUniformsOnProgram(gl: WebGL2RenderingContext, program: WebGLProgram, mask: MaskAdjustments | null): void {
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskExposure'), mask?.exposure ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskContrast'), mask?.contrast ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskHighlights'), mask?.highlights ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskShadows'), mask?.shadows ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskWhites'), mask?.whites ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskBlacks'), mask?.blacks ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskTemperature'), mask?.temperature ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskTint'), mask?.tint ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskSaturation'), mask?.saturation ?? 0)
-    gl.uniform1f(gl.getUniformLocation(program, 'uMaskVibrance'), mask?.vibrance ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uShadowsHue'), adj?.shadowsHue ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uShadowsSat'), adj?.shadowsSat ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uMidtonesHue'), adj?.midtonesHue ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uMidtonesSat'), adj?.midtonesSat ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uHighlightsHue'), adj?.highlightsHue ?? 0)
+    gl.uniform1f(gl.getUniformLocation(program, 'uHighlightsSat'), adj?.highlightsSat ?? 0)
   }
 
   getImageDimensions(): { width: number; height: number } {

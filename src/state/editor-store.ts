@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { EditorState, GlobalAdjustments, HistoryEntry, AdjustmentTab } from './types'
 import { DEFAULT_ADJUSTMENTS } from './types'
-import type { Mask, MaskShape } from '../masks/types'
+import type { Mask, MaskShape, MaskAdjustments } from '../masks/types'
 import { DEFAULT_MASK_ADJUSTMENTS } from '../masks/types'
 import type { RecentFile } from '../utils/recent-files'
 
@@ -24,7 +24,7 @@ interface EditorActions {
   toggleMaskEnabled: (id: string) => void
   duplicateMask: (id: string) => void
   clearAllMasks: () => void
-  updateMaskAdjustment: (id: string, key: string, value: number) => void
+  updateMaskAdjustment: <K extends keyof MaskAdjustments>(id: string, key: K, value: MaskAdjustments[K]) => void
 
   // Transform
   rotateImage: () => void
@@ -94,13 +94,20 @@ export const useEditorStore = create<EditorStore>()(
   },
 
   restoreImage: (data, width, height, recent) => {
+    // Merge defaults in so older saves without HSL/color-grading fields
+    // still load cleanly with the expanded adjustment stack.
     set({
       originalImage: data,
       imageWidth: width,
       imageHeight: height,
       fileName: recent.fileName,
-      adjustments: { ...recent.adjustments },
-      masks: recent.masks.map((m) => ({ ...m, enabled: m.enabled ?? true, shape: { ...m.shape }, adjustments: { ...m.adjustments } })),
+      adjustments: { ...DEFAULT_ADJUSTMENTS, ...recent.adjustments },
+      masks: recent.masks.map((m) => ({
+        ...m,
+        enabled: m.enabled ?? true,
+        shape: { ...m.shape },
+        adjustments: { ...DEFAULT_MASK_ADJUSTMENTS, ...m.adjustments },
+      })),
       activeMaskId: null,
       rotation: recent.rotation,
       history: [],
@@ -275,6 +282,25 @@ export const useEditorStore = create<EditorStore>()(
         activeTab: state.activeTab,
         showHistogram: state.showHistogram,
       }),
+      // Migrate on rehydrate: older saves may lack HSL/color-grading fields
+      // on masks or adjustments. Merge defaults in so the shader always
+      // sees a complete uniform set.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<EditorStore>
+        const mergedAdjustments = { ...DEFAULT_ADJUSTMENTS, ...(p.adjustments ?? {}) }
+        const mergedMasks = (p.masks ?? []).map((m) => ({
+          ...m,
+          enabled: m.enabled ?? true,
+          shape: { ...m.shape },
+          adjustments: { ...DEFAULT_MASK_ADJUSTMENTS, ...m.adjustments },
+        }))
+        return {
+          ...current,
+          ...p,
+          adjustments: mergedAdjustments,
+          masks: mergedMasks,
+        } as EditorStore
+      },
     }
   )
 )

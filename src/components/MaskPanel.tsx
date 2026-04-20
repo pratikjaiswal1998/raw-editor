@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useEditorStore } from '../state/editor-store'
 import type { ShapeType, MaskShape, MaskAdjustments } from '../masks/types'
+import { LightSliders, ColorSliders, HslSliders, type LayerAdjustOnChange } from './AdjustmentPanel'
+import { ColorGradingWheels } from './ColorGradingPanel'
 
 const SHAPE_OPTIONS: { type: ShapeType; label: string; icon: string }[] = [
   { type: 'rectangle', label: 'Rectangle', icon: '▬' },
@@ -9,18 +11,19 @@ const SHAPE_OPTIONS: { type: ShapeType; label: string; icon: string }[] = [
   { type: 'radial-gradient', label: 'Radial Grad', icon: '◎' },
 ]
 
-const MASK_ADJ_SLIDERS: { key: keyof MaskAdjustments; label: string; min: number; max: number; step: number }[] = [
-  { key: 'exposure', label: 'Exposure', min: -5, max: 5, step: 0.05 },
-  { key: 'contrast', label: 'Contrast', min: -100, max: 100, step: 1 },
-  { key: 'highlights', label: 'Highlights', min: -100, max: 100, step: 1 },
-  { key: 'shadows', label: 'Shadows', min: -100, max: 100, step: 1 },
-  { key: 'whites', label: 'Whites', min: -100, max: 100, step: 1 },
-  { key: 'blacks', label: 'Blacks', min: -100, max: 100, step: 1 },
-  { key: 'temperature', label: 'Temperature', min: -100, max: 100, step: 1 },
-  { key: 'tint', label: 'Tint', min: -100, max: 100, step: 1 },
-  { key: 'saturation', label: 'Saturation', min: -100, max: 100, step: 1 },
-  { key: 'vibrance', label: 'Vibrance', min: -100, max: 100, step: 1 },
-]
+function SectionToggle({ open, title, onClick }: { open: boolean; title: string; onClick: () => void }) {
+  return (
+    <button className="mask-section-toggle" onClick={onClick}>
+      <svg
+        width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
+        style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
+      >
+        <path d="M8 5l8 7-8 7z"/>
+      </svg>
+      <span className="section-title">{title}</span>
+    </button>
+  )
+}
 
 export function MaskPanel({ showAll = false }: { showAll?: boolean }) {
   const masks = useEditorStore((s) => s.masks)
@@ -34,10 +37,33 @@ export function MaskPanel({ showAll = false }: { showAll?: boolean }) {
   const duplicateMask = useEditorStore((s) => s.duplicateMask)
   const clearAllMasks = useEditorStore((s) => s.clearAllMasks)
   const updateMaskAdjustment = useEditorStore((s) => s.updateMaskAdjustment)
+  const pushHistory = useEditorStore((s) => s.pushHistory)
   const activeTab = useEditorStore((s) => s.activeTab)
 
   const [shapeOpen, setShapeOpen] = useState(true)
-  const [adjOpen, setAdjOpen] = useState(true)
+  const [lightOpen, setLightOpen] = useState(true)
+  const [colorOpen, setColorOpen] = useState(true)
+  const [hslOpen, setHslOpen] = useState(false)
+  const [gradingOpen, setGradingOpen] = useState(false)
+
+  // Push history once per interaction (drag start), cleared on mouseup.
+  const hasCommittedRef = useRef(false)
+
+  const handleMaskChange = useCallback<LayerAdjustOnChange>(
+    (key, value) => {
+      if (!activeMaskId) return
+      if (!hasCommittedRef.current) {
+        pushHistory()
+        hasCommittedRef.current = true
+      }
+      updateMaskAdjustment(activeMaskId, key as keyof MaskAdjustments, value)
+    },
+    [activeMaskId, updateMaskAdjustment, pushHistory],
+  )
+
+  const handleMaskCommit = useCallback(() => {
+    hasCommittedRef.current = false
+  }, [])
 
   if (!showAll && activeTab !== 'masks') return null
 
@@ -155,12 +181,7 @@ export function MaskPanel({ showAll = false }: { showAll?: boolean }) {
       {/* Active mask: Shape controls (collapsible) */}
       {activeMask && (
         <div className="mask-controls">
-          <button className="mask-section-toggle" onClick={() => setShapeOpen(!shapeOpen)}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ transform: shapeOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
-              <path d="M8 5l8 7-8 7z"/>
-            </svg>
-            <span className="section-title">Shape Controls</span>
-          </button>
+          <SectionToggle open={shapeOpen} title="Shape Controls" onClick={() => setShapeOpen(!shapeOpen)} />
 
           {shapeOpen && (
             <>
@@ -253,42 +274,57 @@ export function MaskPanel({ showAll = false }: { showAll?: boolean }) {
         </div>
       )}
 
-      {/* Active mask: Adjustment sliders (collapsible) */}
+      {/* Active mask: Light (collapsible) */}
       {activeMask && (
         <div className="mask-controls">
-          <button className="mask-section-toggle" onClick={() => setAdjOpen(!adjOpen)}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ transform: adjOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
-              <path d="M8 5l8 7-8 7z"/>
-            </svg>
-            <span className="section-title">Mask Adjustments</span>
-          </button>
+          <SectionToggle open={lightOpen} title="Light" onClick={() => setLightOpen(!lightOpen)} />
+          {lightOpen && (
+            <LightSliders
+              adjustments={activeMask.adjustments}
+              onChange={handleMaskChange}
+              onCommit={handleMaskCommit}
+            />
+          )}
+        </div>
+      )}
 
-          {adjOpen && (
-            <>
-              {MASK_ADJ_SLIDERS.map((s) => {
-                const val = activeMask.adjustments[s.key]
-                const pct = ((val - s.min) / (s.max - s.min)) * 100
-                return (
-                  <div key={s.key} className="slider-row">
-                    <div className="slider-header">
-                      <span className="slider-label">{s.label}</span>
-                      <span className="slider-value">{Math.round(val * 10) / 10}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={s.min} max={s.max} step={s.step}
-                      value={val}
-                      onChange={(e) => updateMaskAdjustment(activeMask.id, s.key, parseFloat(e.target.value))}
-                      onDoubleClick={() => updateMaskAdjustment(activeMask.id, s.key, 0)}
-                      className="slider-input"
-                      style={{
-                        background: `linear-gradient(to right, var(--slider-fill) 0%, var(--slider-fill) ${pct}%, var(--slider-track) ${pct}%, var(--slider-track) 100%)`,
-                      }}
-                    />
-                  </div>
-                )
-              })}
-            </>
+      {/* Active mask: Color (collapsible) */}
+      {activeMask && (
+        <div className="mask-controls">
+          <SectionToggle open={colorOpen} title="Color" onClick={() => setColorOpen(!colorOpen)} />
+          {colorOpen && (
+            <ColorSliders
+              adjustments={activeMask.adjustments}
+              onChange={handleMaskChange}
+              onCommit={handleMaskCommit}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Active mask: HSL (collapsible) */}
+      {activeMask && (
+        <div className="mask-controls">
+          <SectionToggle open={hslOpen} title="HSL" onClick={() => setHslOpen(!hslOpen)} />
+          {hslOpen && (
+            <HslSliders
+              adjustments={activeMask.adjustments}
+              onChange={handleMaskChange}
+              onCommit={handleMaskCommit}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Active mask: Color Grading (collapsible) */}
+      {activeMask && (
+        <div className="mask-controls">
+          <SectionToggle open={gradingOpen} title="Color Grading" onClick={() => setGradingOpen(!gradingOpen)} />
+          {gradingOpen && (
+            <ColorGradingWheels
+              adjustments={activeMask.adjustments}
+              onChange={handleMaskChange}
+            />
           )}
         </div>
       )}

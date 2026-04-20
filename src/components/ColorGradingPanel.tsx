@@ -1,6 +1,7 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useEditorStore } from '../state/editor-store'
 import type { GlobalAdjustments } from '../state/types'
+import type { LayerAdjustOnChange } from './AdjustmentPanel'
 
 interface ColorWheelProps {
   label: string
@@ -137,6 +138,48 @@ function ColorWheel({ label, hue, saturation, onHueChange, onSatChange }: ColorW
   )
 }
 
+// ---------------------------------------------------------------------------
+// Shared three-wheel color grading section. Takes any (adjustments, onChange)
+// pair so both the global panel and the mask panel can reuse it.
+// ---------------------------------------------------------------------------
+
+interface ColorGradingWheelsProps {
+  adjustments: GlobalAdjustments
+  onChange: LayerAdjustOnChange
+}
+
+export function ColorGradingWheels({ adjustments, onChange }: ColorGradingWheelsProps) {
+  return (
+    <div className="color-wheels-row">
+      <ColorWheel
+        label="Shadows"
+        hue={adjustments.shadowsHue}
+        saturation={adjustments.shadowsSat}
+        onHueChange={(v) => onChange('shadowsHue', v)}
+        onSatChange={(v) => onChange('shadowsSat', v)}
+      />
+      <ColorWheel
+        label="Midtones"
+        hue={adjustments.midtonesHue}
+        saturation={adjustments.midtonesSat}
+        onHueChange={(v) => onChange('midtonesHue', v)}
+        onSatChange={(v) => onChange('midtonesSat', v)}
+      />
+      <ColorWheel
+        label="Highlights"
+        hue={adjustments.highlightsHue}
+        saturation={adjustments.highlightsSat}
+        onHueChange={(v) => onChange('highlightsHue', v)}
+        onSatChange={(v) => onChange('highlightsSat', v)}
+      />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Default export: global color grading panel wired to the editor store.
+// ---------------------------------------------------------------------------
+
 export function ColorGradingPanel({ showAll = false }: { showAll?: boolean }) {
   const activeTab = useEditorStore((s) => s.activeTab)
   const adjustments = useEditorStore((s) => s.adjustments)
@@ -144,42 +187,23 @@ export function ColorGradingPanel({ showAll = false }: { showAll?: boolean }) {
   const pushHistory = useEditorStore((s) => s.pushHistory)
   const committed = useRef(false)
 
-  if (!showAll && activeTab !== 'grading') return null
+  const handleChange = useCallback<LayerAdjustOnChange>(
+    (key, value) => {
+      if (!committed.current) {
+        pushHistory()
+        committed.current = true
+        setTimeout(() => { committed.current = false }, 500)
+      }
+      setAdjustment(key, value)
+    },
+    [setAdjustment, pushHistory],
+  )
 
-  const handleChange = <K extends keyof GlobalAdjustments>(key: K, value: GlobalAdjustments[K]) => {
-    if (!committed.current) {
-      pushHistory()
-      committed.current = true
-      setTimeout(() => { committed.current = false }, 500)
-    }
-    setAdjustment(key, value)
-  }
+  if (!showAll && activeTab !== 'grading') return null
 
   return (
     <div className="color-grading-panel">
-      <div className="color-wheels-row">
-        <ColorWheel
-          label="Shadows"
-          hue={adjustments.shadowsHue}
-          saturation={adjustments.shadowsSat}
-          onHueChange={(v) => handleChange('shadowsHue', v)}
-          onSatChange={(v) => handleChange('shadowsSat', v)}
-        />
-        <ColorWheel
-          label="Midtones"
-          hue={adjustments.midtonesHue}
-          saturation={adjustments.midtonesSat}
-          onHueChange={(v) => handleChange('midtonesHue', v)}
-          onSatChange={(v) => handleChange('midtonesSat', v)}
-        />
-        <ColorWheel
-          label="Highlights"
-          hue={adjustments.highlightsHue}
-          saturation={adjustments.highlightsSat}
-          onHueChange={(v) => handleChange('highlightsHue', v)}
-          onSatChange={(v) => handleChange('highlightsSat', v)}
-        />
-      </div>
+      <ColorGradingWheels adjustments={adjustments} onChange={handleChange} />
     </div>
   )
 }

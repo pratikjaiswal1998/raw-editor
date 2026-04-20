@@ -1,3 +1,6 @@
+import type { GlobalAdjustments } from '../state/types'
+import { DEFAULT_ADJUSTMENTS } from '../state/types'
+
 export type ShapeType = 'rectangle' | 'ellipse' | 'linear-gradient' | 'radial-gradient'
 
 export interface MaskShape {
@@ -20,33 +23,20 @@ export interface Mask {
   adjustments: MaskAdjustments
 }
 
-export interface MaskAdjustments {
-  exposure: number
-  contrast: number
-  highlights: number
-  shadows: number
-  whites: number
-  blacks: number
-  temperature: number
-  tint: number
-  saturation: number
-  vibrance: number
-}
+// A mask is a layer with the full adjustment stack (light, color, HSL,
+// color grading). The `sharpness` field on the type is a no-op on masks —
+// sharpening is applied only on the final display pass.
+export type MaskAdjustments = GlobalAdjustments
 
 export interface MaskLayerData {
   raster: Uint8Array
   adjustments: MaskAdjustments
 }
 
+// Fresh arrays so mutations on one mask's HSL don't leak into another.
 export const DEFAULT_MASK_ADJUSTMENTS: MaskAdjustments = {
-  exposure: 0,
-  contrast: 0,
-  highlights: 0,
-  shadows: 0,
-  whites: 0,
-  blacks: 0,
-  temperature: 0,
-  tint: 0,
-  saturation: 0,
-  vibrance: 0,
+  ...DEFAULT_ADJUSTMENTS,
+  hslHue: [...DEFAULT_ADJUSTMENTS.hslHue],
+  hslSaturation: [...DEFAULT_ADJUSTMENTS.hslSaturation],
+  hslLuminance: [...DEFAULT_ADJUSTMENTS.hslLuminance],
 }
