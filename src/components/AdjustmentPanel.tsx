@@ -139,7 +139,7 @@ export function HslSliders({ adjustments, onChange, onCommit }: SectionProps) {
               title={c.name}
             >
               <span className="hsl-color-dot" style={{ background: c.color }} />
-              <span className="hsl-color-name">{c.name.slice(0, 3)}</span>
+              <span className="hsl-color-name">{c.name}</span>
               {hasEdits && <span className="hsl-color-edited" />}
             </button>
           )

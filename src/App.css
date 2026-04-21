@@ -1265,8 +1265,22 @@
     min-height: 40px;
   }
   .mask-action-btn {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
+  }
+  /* HSL channel chips: 4-column grid with full labels, 44px-tall rows */
+  .hsl-color-selector {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+  .hsl-color-btn {
+    min-height: 44px;
+    justify-content: center;
+    padding: 4px 6px;
+  }
+  .hsl-color-name {
+    font-size: 12px;
   }
   .recent-btn--delete {
     width: 40px;
