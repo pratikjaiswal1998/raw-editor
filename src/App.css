@@ -2,6 +2,7 @@
 .editor {
   display: flex;
   flex-direction: column;
+  position: relative;   /* anchor for the absolutely-positioned bottom sheet */
   height: 100vh;        /* fallback */
   height: 100dvh;       /* dynamic viewport — excludes URL bar on mobile */
   width: 100vw;
@@ -15,6 +16,12 @@
   display: flex;
   overflow: hidden;
   min-height: 0;
+  /* Reserve room for the bottom sheet only up to its default height (38dvh).
+     Dragged taller, the sheet overlays the image instead of shrinking it —
+     the picture never collapses to a sliver under a long menu.
+     --sheet-inset is kept in sync by a ResizeObserver in Editor.tsx. */
+  padding-bottom: min(var(--sheet-inset, 0px), 38vh);
+  padding-bottom: min(var(--sheet-inset, 0px), 38dvh);
 }
 
 .editor-canvas-area {
@@ -27,7 +34,13 @@
 .editor-bottom {
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  /* Overlay the canvas instead of sitting in flow — panel height no longer
+     subtracts from the image beyond the reserved inset on .editor-main. */
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20; /* above the mask overlay (10), below the loading overlay (100) */
   background: var(--bg-secondary); /* solid on mobile — cheaper than blur during WebGL updates */
   border-top: 1px solid var(--border);
   max-height: 38vh;
@@ -1316,6 +1329,7 @@
 @media (min-width: 768px) {
   .editor-main {
     flex-direction: row;
+    padding-bottom: 0; /* no bottom sheet on desktop */
   }
 
   .editor-bottom {

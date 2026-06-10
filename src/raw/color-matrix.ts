@@ -2,8 +2,11 @@ import type { DngMetadata } from './types'
 
 // Apply DNG color matrix to convert from camera RGB to XYZ to sRGB
 export function applyColorMatrix(data: Float32Array, metadata: DngMetadata): void {
-  // Use ColorMatrix1 (illuminant A / D65)
-  const cm = metadata.colorMatrix1
+  // Prefer ColorMatrix2 (calibration illuminant 2, almost always D65) over
+  // ColorMatrix1 (illuminant 1, almost always Standard A / tungsten) — we
+  // convert XYZ -> sRGB with a D65 matrix below, so the D65 calibration
+  // gives more accurate hues for daylight shots.
+  const cm = metadata.colorMatrix2.length >= 9 ? metadata.colorMatrix2 : metadata.colorMatrix1
   if (cm.length < 9) return
 
   // DNG ColorMatrix maps XYZ -> CameraRGB, so we need its inverse
@@ -35,6 +38,19 @@ export function applyColorMatrix(data: Float32Array, metadata: DngMetadata): voi
 
   // Combined matrix: camera RGB -> XYZ -> sRGB
   const combined = multiplyMatrix3x3(xyzToSrgb, camToXyz)
+
+  // Anchor neutrals: after the WB multipliers a neutral patch is (1,1,1) in
+  // camera space, but nothing guarantees this matrix maps (1,1,1) to sRGB
+  // white — without normalization every gray picks up a color cast.
+  // Normalize each row to sum to 1 (dcraw-style white-point anchoring).
+  for (let row = 0; row < 3; row++) {
+    const sum = combined[row * 3] + combined[row * 3 + 1] + combined[row * 3 + 2]
+    if (Math.abs(sum) > 1e-6) {
+      combined[row * 3] /= sum
+      combined[row * 3 + 1] /= sum
+      combined[row * 3 + 2] /= sum
+    }
+  }
 
   const pixelCount = data.length / 4
   for (let i = 0; i < pixelCount; i++) {

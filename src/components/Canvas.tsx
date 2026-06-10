@@ -145,8 +145,19 @@ export function Canvas() {
       displayH = containerW / aspectRatio
     }
 
-    const canvasW = Math.round(displayW * dpr * zoom)
-    const canvasH = Math.round(displayH * dpr * zoom)
+    let canvasW = Math.round(displayW * dpr * zoom)
+    let canvasH = Math.round(displayH * dpr * zoom)
+
+    // Cap the backing store: pixels beyond the image's native resolution (or
+    // 4096px) add no detail, and an uncapped dpr×zoom allocation can exhaust
+    // GPU memory and lose the WebGL context on phones.
+    const maxW = Math.min(effectiveW, 4096)
+    const maxH = Math.min(effectiveH, 4096)
+    const cap = Math.min(1, maxW / canvasW, maxH / canvasH)
+    if (cap < 1) {
+      canvasW = Math.round(canvasW * cap)
+      canvasH = Math.round(canvasH * cap)
+    }
 
     // Each enabled mask gets its own composite pass with its own adjustments
     const enabledMasks = masks.filter((m) => m.enabled)
@@ -171,6 +182,20 @@ export function Canvas() {
       cancelAnimationFrame(rafRef.current)
       unsub()
     }
+  }, [render])
+
+  // Re-render when the container resizes (bottom-sheet drag, orientation
+  // change, URL bar show/hide) — store subscriptions can't see layout changes,
+  // so without this the backing resolution goes stale until the next edit.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = requestAnimationFrame(render)
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
   }, [render])
 
   // Touch/mouse pan and zoom

@@ -46,7 +46,7 @@ export async function parseDng(buffer: ArrayBuffer): Promise<RawImage> {
   }
 
   // Apply color matrix
-  if (metadata.colorMatrix1.length > 0) {
+  if (metadata.colorMatrix1.length > 0 || metadata.colorMatrix2.length > 0) {
     applyColorMatrix(imageData, metadata)
   }
 

@@ -34,9 +34,24 @@ export function Editor() {
   const fileName = useEditorStore((s) => s.fileName)
   const originalImage = useEditorStore((s) => s.originalImage)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ startY: number; startH: number } | null>(null)
   const [bottomHeight, setBottomHeight] = useState<number | null>(null) // null = default CSS
+
+  // Mirror the bottom sheet's height into --sheet-inset so .editor-main can
+  // reserve canvas space for it up to a cap (see App.css) — beyond the cap
+  // the sheet overlays the image instead of shrinking it.
+  useEffect(() => {
+    const sheet = bottomRef.current
+    const root = editorRef.current
+    if (!sheet || !root) return
+    const syncInset = () => root.style.setProperty('--sheet-inset', `${sheet.offsetHeight}px`)
+    syncInset()
+    const observer = new ResizeObserver(syncInset)
+    observer.observe(sheet)
+    return () => observer.disconnect()
+  }, [])
 
   // Drag handle for mobile bottom panel
   const onDragStart = useCallback((clientY: number) => {
@@ -158,7 +173,7 @@ export function Editor() {
   }, [undo, redo, resetAdjustments, setActiveTab])
 
   return (
-    <div className="editor">
+    <div className="editor" ref={editorRef}>
       <Toolbar />
 
       <div className="editor-main">

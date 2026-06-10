@@ -141,8 +141,10 @@ vec3 applyLayerAdjustments(vec3 color) {
   float minChannel = min(gamma.r, min(gamma.g, gamma.b));
   float currentSat = (maxChannel - minChannel) / max(maxChannel, 0.001);
   float vibAmount = vib * (1.0 - currentSat);
-  vec3 vibGray = vec3(lum);
-  gamma = mix(gamma, mix(vibGray, gamma, 1.0 + vibAmount), 1.0);
+  // Gray must come from the *current* color — `lum` above predates the tone
+  // curve and HSL stages, so reusing it would shift brightness, not saturation.
+  vec3 vibGray = vec3(dot(gamma, vec3(0.2126, 0.7152, 0.0722)));
+  gamma = mix(vibGray, gamma, 1.0 + vibAmount);
 
   // Saturation (global).
   float sat = 1.0 + uSaturation / 100.0;

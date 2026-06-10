@@ -41,6 +41,7 @@ export class RenderPipeline {
   private canvas: HTMLCanvasElement
   private adjustUniforms: Map<string, WebGLUniformLocation | null> = new Map()
   private compositeUniforms: Map<string, WebGLUniformLocation | null> = new Map()
+  private histReadBuffer: Uint8Array | null = null
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -432,18 +433,31 @@ export class RenderPipeline {
 
   readHistogramData(): { r: Uint32Array; g: Uint32Array; b: Uint32Array } {
     const gl = this.gl
-    const w = Math.min(this.imageWidth, 512)
-    const h = Math.min(this.imageHeight, 512)
+    // Read the entire drawing buffer — the canvas backing store contains only
+    // the image (no letterbox), so a full read is representative. A fixed-size
+    // corner read crops the image and can sample out-of-bounds black.
+    const w = gl.drawingBufferWidth
+    const h = gl.drawingBufferHeight
 
-    // Read back a downsampled version of the display
-    const pixels = new Uint8Array(w * h * 4)
+    const byteLen = w * h * 4
+    if (!this.histReadBuffer || this.histReadBuffer.length !== byteLen) {
+      this.histReadBuffer = new Uint8Array(byteLen)
+    }
+    const pixels = this.histReadBuffer
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
 
     const r = new Uint32Array(256)
     const g = new Uint32Array(256)
     const b = new Uint32Array(256)
 
-    for (let i = 0; i < pixels.length; i += 4) {
+    // Point-sample at a pixel stride so we accumulate at most ~256k samples;
+    // point sampling keeps the histogram a true sample of the distribution
+    // (unlike averaging, which suppresses the extremes).
+    const pixelStep = Math.max(1, Math.floor((w * h) / (512 * 512)))
+    const step = pixelStep * 4
+
+    for (let i = 0; i < pixels.length; i += step) {
       r[pixels[i]]++
       g[pixels[i + 1]]++
       b[pixels[i + 2]]++
